@@ -1,0 +1,1084 @@
+{
+  "100000001": {
+    "companyName": "Boulangerie Les Délices du Port",
+    "flow": "normal",
+    "reasons": [
+      {
+        "code": "CLIMATE_HIGH",
+        "label": "Exposition climatique élevée",
+        "stepId": "climateRisk"
+      }
+    ],
+    "steps": {
+      "checkAccount": {
+        "summary": "Client C-1001 depuis 2016, segment TPE, effectif déclaré 8.",
+        "result": {
+          "customerId": "C-1001",
+          "siren": "100000001",
+          "name": "Boulangerie Les Délices du Port",
+          "segment": "TPE",
+          "customerSince": "2016-03-01",
+          "declaredHeadcount": 8
+        },
+        "calls": [
+          {
+            "method": "GET",
+            "url": "http://localhost:8080/rest/Customer+accounts/1.0.0/customers/by-siren/100000001",
+            "status": 200,
+            "via": "REST"
+          }
+        ]
+      },
+      "companyIdentity": {
+        "summary": "Boulangerie-pâtisserie (10.71C) active, quai Duperré à La Rochelle.",
+        "result": {
+          "siren": "100000001",
+          "denomination": "Boulangerie Les Délices du Port",
+          "nafCode": "10.71C",
+          "nafLabel": "Boulangerie et boulangerie-pâtisserie",
+          "headcountRange": "6-9",
+          "creationDate": "2012-05-14",
+          "active": true,
+          "address": {
+            "street": "12 quai Duperré",
+            "postalCode": "17300",
+            "city": "La Rochelle",
+            "inseeCityCode": "17300",
+            "lat": 46.1591,
+            "lon": -1.152
+          }
+        },
+        "calls": [
+          {
+            "method": "GET",
+            "url": "http://localhost:8080/rest/Sirene/1.0.0/siren/100000001",
+            "status": 200,
+            "via": "REST"
+          }
+        ]
+      },
+      "legalEvents": {
+        "summary": "Aucune procédure collective : 1 annonce (immatriculation).",
+        "result": {
+          "total": 1,
+          "records": [
+            {
+              "type": "Immatriculation",
+              "nature": "Création",
+              "date": "2012-05-14",
+              "court": "Greffe du tribunal de commerce de La Rochelle"
+            }
+          ]
+        },
+        "calls": [
+          {
+            "method": "GET",
+            "url": "http://localhost:8080/rest/BODACC/1.0.0/annonces?siren=100000001",
+            "status": 200,
+            "via": "REST"
+          }
+        ]
+      },
+      "financials": {
+        "summary": "CA 612 k€, résultat 38 k€, endettement 42 %, 41 jours de trésorerie.",
+        "result": {
+          "siren": "100000001",
+          "year": 2025,
+          "revenue": 612000,
+          "netIncome": 38000,
+          "equity": 210000,
+          "debtRatio": 0.42,
+          "cashDays": 41
+        },
+        "calls": [
+          {
+            "method": "GET",
+            "url": "http://localhost:8080/rest/Company+financials/1.0.0/companies/100000001/financials",
+            "status": 200,
+            "via": "REST"
+          }
+        ]
+      },
+      "openItems": {
+        "summary": "Aucun sinistre ouvert, primes à jour.",
+        "result": {
+          "customerId": "C-1001",
+          "openClaims": [],
+          "unpaidPremiums": 0,
+          "pendingTermination": false
+        },
+        "calls": [
+          {
+            "method": "GET",
+            "url": "http://localhost:8080/rest/Claims+and+contracts/1.0.0/customers/C-1001/open-items",
+            "status": 200,
+            "via": "REST"
+          }
+        ]
+      },
+      "dataQuality": {
+        "summary": "Données cohérentes entre CRM, Sirene et bilans (score 94).",
+        "result": {
+          "status": "VALID",
+          "score": 94,
+          "issues": []
+        },
+        "calls": [
+          {
+            "method": "POST",
+            "url": "http://localhost:8080/rest/LLM+gateway/1.0.0/v1/chat/completions",
+            "status": 200,
+            "via": "LLM"
+          }
+        ]
+      },
+      "climateRisk": {
+        "summary": "Risque climatique élevé : local en front de mer exposé à la submersion.",
+        "result": {
+          "level": "HIGH",
+          "score": 78,
+          "drivers": [
+            "Submersion marine HIGH",
+            "Inondation MEDIUM"
+          ],
+          "rationale": "Local commercial sur le port, en zone de submersion marine forte.",
+          "naturalRisks": {
+            "commune": "La Rochelle",
+            "risquesNaturels": {
+              "inondation": {
+                "present": true,
+                "level": "MEDIUM"
+              },
+              "submersionMarine": {
+                "present": true,
+                "level": "HIGH"
+              },
+              "retraitGonflementArgiles": {
+                "present": true,
+                "level": "LOW"
+              },
+              "seisme": {
+                "zone": 2
+              },
+              "feuxForet": {
+                "present": false,
+                "level": "NONE"
+              }
+            }
+          }
+        },
+        "calls": [
+          {
+            "method": "POST",
+            "url": "http://localhost:7778/mcp/reshapr/georisques-1-0-0-default",
+            "status": 200,
+            "via": "MCP"
+          },
+          {
+            "method": "POST",
+            "url": "http://localhost:8080/rest/LLM+gateway/1.0.0/v1/chat/completions",
+            "status": 200,
+            "via": "LLM"
+          },
+          {
+            "method": "POST",
+            "url": "http://localhost:7778/mcp/reshapr/georisques-1-0-0-default",
+            "status": 200,
+            "via": "MCP"
+          },
+          {
+            "method": "POST",
+            "url": "http://localhost:8080/rest/LLM+gateway/1.0.0/v1/chat/completions",
+            "status": 200,
+            "via": "LLM"
+          }
+        ]
+      },
+      "financialHealth": {
+        "summary": "Situation financière saine (score 81).",
+        "result": {
+          "level": "SOUND",
+          "score": 81,
+          "rationale": "Rentable, endettement maîtrisé, trésorerie confortable."
+        },
+        "calls": [
+          {
+            "method": "POST",
+            "url": "http://localhost:8080/rest/LLM+gateway/1.0.0/v1/chat/completions",
+            "status": 200,
+            "via": "LLM"
+          }
+        ]
+      },
+      "openItemsReview": {
+        "summary": "Aucun encours : complexité faible.",
+        "result": {
+          "complexity": "LOW",
+          "manageable": true,
+          "rationale": "Ni sinistre ouvert ni impayé."
+        },
+        "calls": [
+          {
+            "method": "POST",
+            "url": "http://localhost:8080/rest/LLM+gateway/1.0.0/v1/chat/completions",
+            "status": 200,
+            "via": "LLM"
+          }
+        ]
+      },
+      "synthesis": {
+        "summary": "Suggestion : accepter avec une surprime de 15 % (submersion marine).",
+        "result": {
+          "decision": "ACCEPT_WITH_SURCHARGE",
+          "surchargePercent": 15,
+          "confidence": 0.86,
+          "rationale": [
+            "Entreprise saine et rentable, sans sinistre ouvert.",
+            "Exposition forte à la submersion marine sur le port de La Rochelle.",
+            "Surprime de 15 % sur la garantie événements naturels recommandée."
+          ]
+        },
+        "calls": [
+          {
+            "method": "POST",
+            "url": "http://localhost:8080/rest/LLM+gateway/1.0.0/v1/chat/completions",
+            "status": 200,
+            "via": "LLM"
+          }
+        ]
+      }
+    },
+    "recommendation": {
+      "decision": "ACCEPT_WITH_SURCHARGE",
+      "surchargePercent": 15,
+      "confidence": 0.86,
+      "rationale": [
+        "Entreprise saine et rentable, sans sinistre ouvert.",
+        "Exposition forte à la submersion marine sur le port de La Rochelle.",
+        "Surprime de 15 % sur la garantie événements naturels recommandée."
+      ],
+      "source": "LLM"
+    }
+  },
+  "100000002": {
+    "companyName": "Atelier Mécanique Durand",
+    "flow": "normal",
+    "reasons": [],
+    "steps": {
+      "checkAccount": {
+        "summary": "Client C-1002 depuis 2011, segment PME, effectif déclaré 14.",
+        "result": {
+          "customerId": "C-1002",
+          "siren": "100000002",
+          "name": "Atelier Mécanique Durand",
+          "segment": "PME",
+          "customerSince": "2011-01-15",
+          "declaredHeadcount": 14
+        },
+        "calls": [
+          {
+            "method": "GET",
+            "url": "http://localhost:8080/rest/Customer+accounts/1.0.0/customers/by-siren/100000002",
+            "status": 200,
+            "via": "REST"
+          }
+        ]
+      },
+      "companyIdentity": {
+        "summary": "Mécanique industrielle (25.62B) active à Clermont-Ferrand.",
+        "result": {
+          "siren": "100000002",
+          "denomination": "Atelier Mécanique Durand",
+          "nafCode": "25.62B",
+          "nafLabel": "Mécanique industrielle",
+          "headcountRange": "10-19",
+          "creationDate": "2004-09-01",
+          "active": true,
+          "address": {
+            "street": "8 rue de l'Industrie",
+            "postalCode": "63000",
+            "city": "Clermont-Ferrand",
+            "inseeCityCode": "63113",
+            "lat": 45.7772,
+            "lon": 3.087
+          }
+        },
+        "calls": [
+          {
+            "method": "GET",
+            "url": "http://localhost:8080/rest/Sirene/1.0.0/siren/100000002",
+            "status": 200,
+            "via": "REST"
+          }
+        ]
+      },
+      "legalEvents": {
+        "summary": "Aucune procédure collective : 2 annonces de routine.",
+        "result": {
+          "total": 2,
+          "records": [
+            {
+              "type": "Immatriculation",
+              "nature": "Création",
+              "date": "2004-09-01",
+              "court": "Greffe du tribunal de commerce de Clermont-Ferrand"
+            },
+            {
+              "type": "Modification",
+              "nature": "Transfert de siège",
+              "date": "2018-04-03",
+              "court": "Greffe du tribunal de commerce de Clermont-Ferrand"
+            }
+          ]
+        },
+        "calls": [
+          {
+            "method": "GET",
+            "url": "http://localhost:8080/rest/BODACC/1.0.0/annonces?siren=100000002",
+            "status": 200,
+            "via": "REST"
+          }
+        ]
+      },
+      "financials": {
+        "summary": "CA 1,84 M€, résultat 126 k€, endettement 31 %, 63 jours de trésorerie.",
+        "result": {
+          "siren": "100000002",
+          "year": 2025,
+          "revenue": 1840000,
+          "netIncome": 126000,
+          "equity": 640000,
+          "debtRatio": 0.31,
+          "cashDays": 63
+        },
+        "calls": [
+          {
+            "method": "GET",
+            "url": "http://localhost:8080/rest/Company+financials/1.0.0/companies/100000002/financials",
+            "status": 200,
+            "via": "REST"
+          }
+        ]
+      },
+      "openItems": {
+        "summary": "1 sinistre clos en cours de règlement, primes à jour.",
+        "result": {
+          "customerId": "C-1002",
+          "openClaims": [
+            {
+              "claimId": "S-2025-0412",
+              "type": "Bris de machine",
+              "amount": 3200,
+              "status": "SETTLING",
+              "litigation": false
+            }
+          ],
+          "unpaidPremiums": 0,
+          "pendingTermination": false
+        },
+        "calls": [
+          {
+            "method": "GET",
+            "url": "http://localhost:8080/rest/Claims+and+contracts/1.0.0/customers/C-1002/open-items",
+            "status": 200,
+            "via": "REST"
+          }
+        ]
+      },
+      "dataQuality": {
+        "summary": "Données cohérentes (score 97).",
+        "result": {
+          "status": "VALID",
+          "score": 97,
+          "issues": []
+        },
+        "calls": [
+          {
+            "method": "POST",
+            "url": "http://localhost:8080/rest/LLM+gateway/1.0.0/v1/chat/completions",
+            "status": 200,
+            "via": "LLM"
+          }
+        ]
+      },
+      "climateRisk": {
+        "summary": "Risque climatique faible.",
+        "result": {
+          "level": "LOW",
+          "score": 18,
+          "drivers": [
+            "Inondation LOW"
+          ],
+          "rationale": "Zone urbaine peu exposée.",
+          "naturalRisks": {
+            "commune": "Clermont-Ferrand",
+            "risquesNaturels": {
+              "inondation": {
+                "present": true,
+                "level": "LOW"
+              },
+              "submersionMarine": {
+                "present": false,
+                "level": "NONE"
+              },
+              "retraitGonflementArgiles": {
+                "present": true,
+                "level": "LOW"
+              },
+              "seisme": {
+                "zone": 3
+              },
+              "feuxForet": {
+                "present": false,
+                "level": "NONE"
+              }
+            }
+          }
+        },
+        "calls": [
+          {
+            "method": "POST",
+            "url": "http://localhost:7778/mcp/reshapr/georisques-1-0-0-default",
+            "status": 200,
+            "via": "MCP"
+          },
+          {
+            "method": "POST",
+            "url": "http://localhost:8080/rest/LLM+gateway/1.0.0/v1/chat/completions",
+            "status": 200,
+            "via": "LLM"
+          },
+          {
+            "method": "POST",
+            "url": "http://localhost:7778/mcp/reshapr/georisques-1-0-0-default",
+            "status": 200,
+            "via": "MCP"
+          },
+          {
+            "method": "POST",
+            "url": "http://localhost:8080/rest/LLM+gateway/1.0.0/v1/chat/completions",
+            "status": 200,
+            "via": "LLM"
+          }
+        ]
+      },
+      "financialHealth": {
+        "summary": "Situation financière saine (score 88).",
+        "result": {
+          "level": "SOUND",
+          "score": 88,
+          "rationale": "Bonne rentabilité, fonds propres solides."
+        },
+        "calls": [
+          {
+            "method": "POST",
+            "url": "http://localhost:8080/rest/LLM+gateway/1.0.0/v1/chat/completions",
+            "status": 200,
+            "via": "LLM"
+          }
+        ]
+      },
+      "openItemsReview": {
+        "summary": "1 petit sinistre en règlement : complexité faible.",
+        "result": {
+          "complexity": "LOW",
+          "manageable": true,
+          "rationale": "Sinistre de faible montant, sans contentieux."
+        },
+        "calls": [
+          {
+            "method": "POST",
+            "url": "http://localhost:8080/rest/LLM+gateway/1.0.0/v1/chat/completions",
+            "status": 200,
+            "via": "LLM"
+          }
+        ]
+      },
+      "synthesis": {
+        "summary": "Suggestion : accepter aux conditions standard.",
+        "result": {
+          "decision": "ACCEPT",
+          "surchargePercent": 0,
+          "confidence": 0.93,
+          "rationale": [
+            "Entreprise solide et cliente fidèle depuis 2011.",
+            "Risques naturels faibles sur le site de Clermont-Ferrand.",
+            "Sinistralité faible et maîtrisée."
+          ]
+        },
+        "calls": [
+          {
+            "method": "POST",
+            "url": "http://localhost:8080/rest/LLM+gateway/1.0.0/v1/chat/completions",
+            "status": 200,
+            "via": "LLM"
+          }
+        ]
+      }
+    },
+    "recommendation": {
+      "decision": "ACCEPT",
+      "surchargePercent": 0,
+      "confidence": 0.93,
+      "rationale": [
+        "Entreprise solide et cliente fidèle depuis 2011.",
+        "Risques naturels faibles sur le site de Clermont-Ferrand.",
+        "Sinistralité faible et maîtrisée."
+      ],
+      "source": "LLM"
+    }
+  },
+  "100000003": {
+    "companyName": "Transports Express Nord",
+    "flow": "collective",
+    "reasons": [
+      {
+        "code": "COLLECTIVE_PROCEDURE",
+        "label": "Procédure collective en cours (BODACC)",
+        "stepId": "legalEvents"
+      }
+    ],
+    "steps": {
+      "checkAccount": {
+        "summary": "Client C-1003 depuis 2014, segment PME, effectif déclaré 32.",
+        "result": {
+          "customerId": "C-1003",
+          "siren": "100000003",
+          "name": "Transports Express Nord",
+          "segment": "PME",
+          "customerSince": "2014-09-01",
+          "declaredHeadcount": 32
+        },
+        "calls": [
+          {
+            "method": "GET",
+            "url": "http://localhost:8080/rest/Customer+accounts/1.0.0/customers/by-siren/100000003",
+            "status": 200,
+            "via": "REST"
+          }
+        ]
+      },
+      "companyIdentity": {
+        "summary": "Transport routier de fret (49.41A) à Lille.",
+        "result": {
+          "siren": "100000003",
+          "denomination": "Transports Express Nord",
+          "nafCode": "49.41A",
+          "nafLabel": "Transports routiers de fret interurbains",
+          "headcountRange": "20-49",
+          "creationDate": "2009-02-10",
+          "active": true,
+          "address": {
+            "street": "45 avenue de la République",
+            "postalCode": "59000",
+            "city": "Lille",
+            "inseeCityCode": "59350",
+            "lat": 50.6292,
+            "lon": 3.0573
+          }
+        },
+        "calls": [
+          {
+            "method": "GET",
+            "url": "http://localhost:8080/rest/Sirene/1.0.0/siren/100000003",
+            "status": 200,
+            "via": "REST"
+          }
+        ]
+      },
+      "legalEvents": {
+        "summary": "Redressement judiciaire publié au BODACC le 12/09/2026.",
+        "result": {
+          "total": 2,
+          "records": [
+            {
+              "type": "Procédure collective",
+              "nature": "Jugement d'ouverture de redressement judiciaire",
+              "date": "2026-09-12",
+              "court": "Tribunal de commerce de Lille Métropole"
+            },
+            {
+              "type": "Immatriculation",
+              "nature": "Création",
+              "date": "2009-02-10",
+              "court": "Greffe du tribunal de commerce de Lille Métropole"
+            }
+          ]
+        },
+        "calls": [
+          {
+            "method": "GET",
+            "url": "http://localhost:8080/rest/BODACC/1.0.0/annonces?siren=100000003",
+            "status": 200,
+            "via": "REST"
+          }
+        ]
+      },
+      "financials": {
+        "summary": "CA 4,2 M€, perte de 380 k€, endettement 91 %.",
+        "result": {
+          "siren": "100000003",
+          "year": 2025,
+          "revenue": 4200000,
+          "netIncome": -380000,
+          "equity": 95000,
+          "debtRatio": 0.91,
+          "cashDays": 6
+        },
+        "calls": [
+          {
+            "method": "GET",
+            "url": "http://localhost:8080/rest/Company+financials/1.0.0/companies/100000003/financials",
+            "status": 200,
+            "via": "REST"
+          }
+        ]
+      },
+      "openItems": {
+        "summary": "2 sinistres ouverts, 1 prime impayée.",
+        "result": {
+          "customerId": "C-1003",
+          "openClaims": [
+            {
+              "claimId": "S-2026-0101",
+              "type": "Dommages marchandises",
+              "amount": 18500,
+              "status": "OPEN",
+              "litigation": false
+            },
+            {
+              "claimId": "S-2026-0233",
+              "type": "Vol",
+              "amount": 7400,
+              "status": "OPEN",
+              "litigation": false
+            }
+          ],
+          "unpaidPremiums": 1,
+          "pendingTermination": false
+        },
+        "calls": [
+          {
+            "method": "GET",
+            "url": "http://localhost:8080/rest/Claims+and+contracts/1.0.0/customers/C-1003/open-items",
+            "status": 200,
+            "via": "REST"
+          }
+        ]
+      },
+      "dataQuality": {
+        "status": "SKIPPED",
+        "summary": "Non exécutée : procédure collective, l'orchestrateur coupe court (aucun LLM appelé)."
+      },
+      "climateRisk": {
+        "status": "SKIPPED",
+        "summary": "Non exécutée : procédure collective, l'orchestrateur coupe court (aucun LLM appelé)."
+      },
+      "financialHealth": {
+        "status": "SKIPPED",
+        "summary": "Non exécutée : procédure collective, l'orchestrateur coupe court (aucun LLM appelé)."
+      },
+      "openItemsReview": {
+        "status": "SKIPPED",
+        "summary": "Non exécutée : procédure collective, l'orchestrateur coupe court (aucun LLM appelé)."
+      },
+      "synthesis": {
+        "kind": "RULE",
+        "summary": "Règle métier : refus suggéré en cas de procédure collective.",
+        "result": {
+          "rule": "COLLECTIVE_PROCEDURE"
+        },
+        "calls": []
+      }
+    },
+    "recommendation": {
+      "decision": "REFUSE",
+      "surchargePercent": 0,
+      "confidence": 1,
+      "rationale": [
+        "Redressement judiciaire en cours (BODACC, 12/09/2026).",
+        "Règle de souscription : pas de nouveau contrat pendant une procédure collective."
+      ],
+      "source": "RULE"
+    }
+  },
+  "100000004": {
+    "companyName": "Restaurant Le Vieux Moulin",
+    "flow": "normal",
+    "reasons": [
+      {
+        "code": "CLIMATE_HIGH",
+        "label": "Exposition climatique élevée",
+        "stepId": "climateRisk"
+      },
+      {
+        "code": "FINANCIAL_FRAGILE",
+        "label": "Situation financière fragile",
+        "stepId": "financialHealth"
+      },
+      {
+        "code": "OPEN_LITIGATION",
+        "label": "Sinistre ouvert en contentieux",
+        "stepId": "openItems"
+      },
+      {
+        "code": "DATA_INCONSISTENT",
+        "label": "Données incohérentes (effectif déclaré vs INSEE)",
+        "stepId": "dataQuality"
+      }
+    ],
+    "steps": {
+      "checkAccount": {
+        "summary": "Client C-1004 depuis 2019, segment TPE, effectif déclaré 25.",
+        "result": {
+          "customerId": "C-1004",
+          "siren": "100000004",
+          "name": "Restaurant Le Vieux Moulin",
+          "segment": "TPE",
+          "customerSince": "2019-04-01",
+          "declaredHeadcount": 25
+        },
+        "calls": [
+          {
+            "method": "GET",
+            "url": "http://localhost:8080/rest/Customer+accounts/1.0.0/customers/by-siren/100000004",
+            "status": 200,
+            "via": "REST"
+          }
+        ]
+      },
+      "companyIdentity": {
+        "summary": "Restauration traditionnelle (56.10A), tranche 6 à 9 salariés, Avignon.",
+        "result": {
+          "siren": "100000004",
+          "denomination": "Restaurant Le Vieux Moulin",
+          "nafCode": "56.10A",
+          "nafLabel": "Restauration traditionnelle",
+          "headcountRange": "6-9",
+          "creationDate": "2015-06-20",
+          "active": true,
+          "address": {
+            "street": "3 rue du Moulin",
+            "postalCode": "84000",
+            "city": "Avignon",
+            "inseeCityCode": "84007",
+            "lat": 43.9493,
+            "lon": 4.8055
+          }
+        },
+        "calls": [
+          {
+            "method": "GET",
+            "url": "http://localhost:8080/rest/Sirene/1.0.0/siren/100000004",
+            "status": 200,
+            "via": "REST"
+          }
+        ]
+      },
+      "legalEvents": {
+        "summary": "Aucune procédure collective.",
+        "result": {
+          "total": 1,
+          "records": [
+            {
+              "type": "Immatriculation",
+              "nature": "Création",
+              "date": "2015-06-20",
+              "court": "Greffe du tribunal de commerce d'Avignon"
+            }
+          ]
+        },
+        "calls": [
+          {
+            "method": "GET",
+            "url": "http://localhost:8080/rest/BODACC/1.0.0/annonces?siren=100000004",
+            "status": 200,
+            "via": "REST"
+          }
+        ]
+      },
+      "financials": {
+        "summary": "CA 480 k€, perte de 22 k€, endettement 78 %, 9 jours de trésorerie.",
+        "result": {
+          "siren": "100000004",
+          "year": 2025,
+          "revenue": 480000,
+          "netIncome": -22000,
+          "equity": 41000,
+          "debtRatio": 0.78,
+          "cashDays": 9
+        },
+        "calls": [
+          {
+            "method": "GET",
+            "url": "http://localhost:8080/rest/Company+financials/1.0.0/companies/100000004/financials",
+            "status": 200,
+            "via": "REST"
+          }
+        ]
+      },
+      "openItems": {
+        "summary": "3 sinistres ouverts dont 1 en contentieux.",
+        "result": {
+          "customerId": "C-1004",
+          "openClaims": [
+            {
+              "claimId": "S-2025-0877",
+              "type": "Dégât des eaux",
+              "amount": 12400,
+              "status": "OPEN",
+              "litigation": false
+            },
+            {
+              "claimId": "S-2026-0045",
+              "type": "Responsabilité civile",
+              "amount": 38000,
+              "status": "OPEN",
+              "litigation": true
+            },
+            {
+              "claimId": "S-2026-0310",
+              "type": "Bris de glace",
+              "amount": 1900,
+              "status": "OPEN",
+              "litigation": false
+            }
+          ],
+          "unpaidPremiums": 0,
+          "pendingTermination": false
+        },
+        "calls": [
+          {
+            "method": "GET",
+            "url": "http://localhost:8080/rest/Claims+and+contracts/1.0.0/customers/C-1004/open-items",
+            "status": 200,
+            "via": "REST"
+          }
+        ]
+      },
+      "dataQuality": {
+        "summary": "Effectif déclaré (25) incohérent avec Sirene (6 à 9 salariés).",
+        "result": {
+          "status": "WARNINGS",
+          "score": 61,
+          "issues": [
+            "Effectif déclaré 25 vs tranche INSEE 6-9",
+            "Bilan 2025 sans annexe"
+          ]
+        },
+        "calls": [
+          {
+            "method": "POST",
+            "url": "http://localhost:8080/rest/LLM+gateway/1.0.0/v1/chat/completions",
+            "status": 200,
+            "via": "LLM"
+          }
+        ]
+      },
+      "climateRisk": {
+        "summary": "Risque climatique élevé : argiles fort et inondation moyenne.",
+        "result": {
+          "level": "HIGH",
+          "score": 71,
+          "drivers": [
+            "Retrait-gonflement des argiles HIGH",
+            "Inondation MEDIUM"
+          ],
+          "rationale": "Bâti ancien exposé aux mouvements de terrain.",
+          "naturalRisks": {
+            "commune": "Avignon",
+            "risquesNaturels": {
+              "inondation": {
+                "present": true,
+                "level": "MEDIUM"
+              },
+              "submersionMarine": {
+                "present": false,
+                "level": "NONE"
+              },
+              "retraitGonflementArgiles": {
+                "present": true,
+                "level": "HIGH"
+              },
+              "seisme": {
+                "zone": 2
+              },
+              "feuxForet": {
+                "present": true,
+                "level": "LOW"
+              }
+            }
+          }
+        },
+        "calls": [
+          {
+            "method": "POST",
+            "url": "http://localhost:7778/mcp/reshapr/georisques-1-0-0-default",
+            "status": 200,
+            "via": "MCP"
+          },
+          {
+            "method": "POST",
+            "url": "http://localhost:8080/rest/LLM+gateway/1.0.0/v1/chat/completions",
+            "status": 200,
+            "via": "LLM"
+          },
+          {
+            "method": "POST",
+            "url": "http://localhost:7778/mcp/reshapr/georisques-1-0-0-default",
+            "status": 200,
+            "via": "MCP"
+          },
+          {
+            "method": "POST",
+            "url": "http://localhost:8080/rest/LLM+gateway/1.0.0/v1/chat/completions",
+            "status": 200,
+            "via": "LLM"
+          }
+        ]
+      },
+      "financialHealth": {
+        "summary": "Situation financière fragile (score 38).",
+        "result": {
+          "level": "FRAGILE",
+          "score": 38,
+          "rationale": "Exercice en perte, trésorerie tendue, endettement élevé."
+        },
+        "calls": [
+          {
+            "method": "POST",
+            "url": "http://localhost:8080/rest/LLM+gateway/1.0.0/v1/chat/completions",
+            "status": 200,
+            "via": "LLM"
+          }
+        ]
+      },
+      "openItemsReview": {
+        "summary": "Encours complexe : un contentieux RC en cours.",
+        "result": {
+          "complexity": "HIGH",
+          "manageable": false,
+          "rationale": "3 sinistres ouverts dont un contentieux de 38 k€."
+        },
+        "calls": [
+          {
+            "method": "POST",
+            "url": "http://localhost:8080/rest/LLM+gateway/1.0.0/v1/chat/completions",
+            "status": 200,
+            "via": "LLM"
+          }
+        ]
+      },
+      "synthesis": {
+        "summary": "Suggestion : examen approfondi par un souscripteur.",
+        "result": {
+          "decision": "REVIEW",
+          "surchargePercent": 0,
+          "confidence": 0.58,
+          "rationale": [
+            "Finances fragiles : exercice en perte et 9 jours de trésorerie.",
+            "Argiles fort sur un bâti ancien.",
+            "3 sinistres ouverts dont un contentieux.",
+            "Effectif déclaré incohérent avec Sirene : à faire confirmer."
+          ]
+        },
+        "calls": [
+          {
+            "method": "POST",
+            "url": "http://localhost:8080/rest/LLM+gateway/1.0.0/v1/chat/completions",
+            "status": 200,
+            "via": "LLM"
+          }
+        ]
+      }
+    },
+    "recommendation": {
+      "decision": "REVIEW",
+      "surchargePercent": 0,
+      "confidence": 0.58,
+      "rationale": [
+        "Finances fragiles : exercice en perte et 9 jours de trésorerie.",
+        "Argiles fort sur un bâti ancien.",
+        "3 sinistres ouverts dont un contentieux.",
+        "Effectif déclaré incohérent avec Sirene : à faire confirmer."
+      ],
+      "source": "LLM"
+    }
+  },
+  "999999999": {
+    "flow": "unknown",
+    "reasons": [
+      {
+        "code": "UNKNOWN_CUSTOMER",
+        "label": "Compte client introuvable pour ce SIREN",
+        "stepId": "checkAccount"
+      }
+    ],
+    "steps": {
+      "checkAccount": {
+        "summary": "Aucun compte client pour ce SIREN (CUSTOMER_NOT_FOUND).",
+        "result": {
+          "code": "CUSTOMER_NOT_FOUND"
+        },
+        "calls": [
+          {
+            "method": "GET",
+            "url": "http://localhost:8080/rest/Customer+accounts/1.0.0/customers/by-siren/999999999",
+            "status": 404,
+            "via": "REST"
+          }
+        ]
+      },
+      "companyIdentity": {
+        "status": "SKIPPED",
+        "summary": "Non exécutée : aucun compte client pour ce SIREN."
+      },
+      "legalEvents": {
+        "status": "SKIPPED",
+        "summary": "Non exécutée : aucun compte client pour ce SIREN."
+      },
+      "financials": {
+        "status": "SKIPPED",
+        "summary": "Non exécutée : aucun compte client pour ce SIREN."
+      },
+      "openItems": {
+        "status": "SKIPPED",
+        "summary": "Non exécutée : aucun compte client pour ce SIREN."
+      },
+      "dataReview": {
+        "status": "SKIPPED",
+        "summary": "Non exécutée : aucun compte client pour ce SIREN."
+      },
+      "dataQuality": {
+        "status": "SKIPPED",
+        "summary": "Non exécutée : aucun compte client pour ce SIREN."
+      },
+      "climateRisk": {
+        "status": "SKIPPED",
+        "summary": "Non exécutée : aucun compte client pour ce SIREN."
+      },
+      "financialHealth": {
+        "status": "SKIPPED",
+        "summary": "Non exécutée : aucun compte client pour ce SIREN."
+      },
+      "openItemsReview": {
+        "status": "SKIPPED",
+        "summary": "Non exécutée : aucun compte client pour ce SIREN."
+      },
+      "synthesis": {
+        "status": "SKIPPED",
+        "kind": "RULE",
+        "summary": "Règle métier : non éligible sans compte client."
+      }
+    },
+    "recommendation": {
+      "decision": "NOT_ELIGIBLE",
+      "surchargePercent": 0,
+      "confidence": 1,
+      "rationale": [
+        "Aucun compte client pour ce SIREN : ouvrir d'abord le compte dans le CRM."
+      ],
+      "source": "RULE"
+    }
+  }
+}

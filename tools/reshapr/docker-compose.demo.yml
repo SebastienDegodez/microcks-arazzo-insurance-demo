@@ -1,0 +1,27 @@
+# Demo overrides applied on top of reShapr's release compose file (docker-compose-<release>.yml, downloaded by
+# scripts/start-reshapr.sh exactly as `reshapr run` would do).
+#
+# - The MCP gateway is published on 7778 instead of 7777: on this machine 127.0.0.1:7777 is already taken by
+#   another local tool, and the demo must not touch it. The gateway still listens on 7777 inside its container.
+#   Change RESHAPR_MCP_PORT in scripts/start-reshapr.sh to publish it elsewhere.
+# - The backend HTTP timeout is raised from 3 s to 15 s: the Georisques mock in Microcks answers in up to 6 s
+#   (x-microcks-operation delay 6000, random-80), which reShapr would otherwise cut off.
+# - Postgres data goes to the named volume reshapr-demo-pgdata instead of the ~/tmp/reshapr-data bind mount
+#   (on Docker Desktop for macOS the bind mount fails: "data directory ... has wrong ownership").
+services:
+  postgres:
+    volumes:
+      - "reshapr-demo-pgdata:/var/lib/postgresql/data/pgdata"
+
+  gateway-01:
+    ports: !override
+      - "${RESHAPR_MCP_PORT:-7778}:7777"
+    environment:
+      - RESHAPR_GATEWAY_FQDNS=localhost:${RESHAPR_MCP_PORT:-7778}
+      - RESHAPR_GATEWAY_BACKEND_HTTP_DEFAULT_TIMEOUT=15000
+      # RESHAPR_PROXY_LOG_LEVEL=DEBUG logs every MCP request and backend call of the proxy.
+      - QUARKUS_LOG_CATEGORY__IO_RESHAPR_PROXY__LEVEL=${RESHAPR_PROXY_LOG_LEVEL:-INFO}
+
+volumes:
+  reshapr-demo-pgdata:
+    name: reshapr-demo-pgdata

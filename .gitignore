@@ -1,0 +1,16 @@
+# .NET build output
+bin/
+obj/
+TestResults/
+*.user
+.vs/
+.idea/
+
+# reShapr CLI dependencies (npm install in tools/reshapr)
+node_modules/
+
+# Logs and screenshots of local runs
+.run/
+
+.DS_Store
+__pycache__/

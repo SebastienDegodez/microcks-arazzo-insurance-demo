@@ -1,0 +1,8 @@
+{
+  "name": "reshapr-tools",
+  "private": true,
+  "description": "Local reShapr CLI for the insurance demo (no global install).",
+  "dependencies": {
+    "@reshapr/reshapr-cli": "^1.1.0"
+  }
+}

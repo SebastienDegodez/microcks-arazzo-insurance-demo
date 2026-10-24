@@ -1,0 +1,108 @@
+/* Mode « Comprendre »: the who-calls-whom diagram (FlowDiagram). */
+.fd { border: 1px solid var(--border); border-radius: var(--radius-m); overflow: hidden; background: var(--surface); }
+.fd-scroll { overflow-x: auto; background: var(--surface-2); }
+.fd-svg { width: 100%; min-width: 440px; height: auto; display: block; }
+.fd-frame rect { fill: var(--brand-tint); fill-opacity: .45; stroke: var(--brand); stroke-width: 1.6; stroke-dasharray: 7 5; }
+.fd-frame-label { font: 700 16px var(--font-serif); fill: var(--text-strong); }
+.fd-frame-sub { font: 400 12px var(--font-sans); fill: var(--text-muted); }
+
+.fd-node > rect { stroke-width: 1.6; transition: stroke-width .2s, filter .2s; }
+.fd-label { font: 700 12.5px var(--font-sans); fill: var(--text-strong); }
+.fd-sub { font: 400 11px var(--font-sans); fill: var(--text-muted); }
+.fd-node.ui > rect { fill: var(--surface); stroke: var(--human); stroke-width: 2; }
+.fd-node.ui .fd-icon { color: var(--human); }
+.fd-icon { color: var(--text-muted); }
+.fd-node.llm .fd-icon { color: var(--src-llm); } .fd-node.mcp .fd-icon, .fd-node.reshapr .fd-icon { color: var(--src-mcp); } .fd-node.orch .fd-icon, .fd-node.uw .fd-icon { color: var(--brand); }
+.fd-node.orch > rect { fill: var(--surface); stroke: var(--brand); stroke-width: 2.4; }
+.fd-node.orch .fd-label { fill: var(--brand); }
+.fd-node.off > rect { fill: var(--surface-3); stroke: var(--border-strong); stroke-dasharray: 5 4; }
+.fd-node.off text { fill: var(--text-muted); text-decoration: line-through; }
+.fd-node.off .fd-sub { text-decoration: none; }
+.fd-node.uw > rect { fill: var(--surface); stroke: var(--brand); stroke-width: 2.6; }
+.fd-node.uw .fd-label { fill: var(--brand); }
+.fd-node.mock > rect { fill: var(--surface); stroke: var(--src-internal); }
+.fd-node.mcp > rect, .fd-node.reshapr > rect { fill: var(--surface); stroke: var(--src-mcp); stroke-width: 2; }
+.fd-node.reshapr > rect { stroke-dasharray: 6 3; }
+.fd-node.mcp .fd-label, .fd-node.reshapr .fd-label { fill: var(--src-mcp); }
+.fd-node.llm > rect { fill: var(--surface); stroke: var(--src-llm); stroke-width: 2; }
+.fd-node.llm .fd-label { fill: var(--src-llm); }
+.fd-node.ext > rect { fill: var(--surface-3); stroke: var(--border-strong); stroke-dasharray: 5 4; }
+
+.fd-node.flash-req > rect { stroke: var(--flow-req); stroke-width: 4; filter: drop-shadow(0 0 5px var(--flow-req)); }
+.fd-node.flash-ok > rect { stroke: var(--flow-ok); stroke-width: 4; filter: drop-shadow(0 0 5px var(--flow-ok)); }
+.fd-node.flash-ko > rect { stroke: var(--flow-ko); stroke-width: 4; filter: drop-shadow(0 0 5px var(--flow-ko)); }
+.fd-node.flash-mcp > rect { stroke: var(--flow-mcp); stroke-width: 4; filter: drop-shadow(0 0 5px var(--flow-mcp)); }
+.fd-node.flash-llm > rect { stroke: var(--flow-llm); stroke-width: 4; filter: drop-shadow(0 0 5px var(--flow-llm)); }
+.fd-node.flash-ghost > rect { stroke-width: 3; stroke-dasharray: 3 3; }
+.fd-node.busy > rect { animation: fd-pulse 1s ease-in-out infinite; stroke: var(--brand); }
+.fd-node.llm.busy > rect { stroke: var(--flow-llm); }
+.fd-node.mcp.busy > rect, .fd-node.reshapr.busy > rect { stroke: var(--flow-mcp); }
+.fd-node.waiting > rect { animation: fd-wait 1.2s ease-in-out infinite; stroke: var(--human); fill: var(--human-tint); }
+@keyframes fd-pulse { 50% { stroke-width: 5; filter: drop-shadow(0 0 5px var(--flow-req)); } }
+@keyframes fd-wait { 50% { stroke-width: 5; } }
+.fd-badge-bg { fill: var(--brand); }
+.fd-badge-bg.queue { fill: var(--queue); }
+.fd-badge-bg.run { fill: var(--flow-llm); }
+.fd-badge-bg.human { fill: var(--human); }
+.fd-badge text { font: 700 10px var(--font-sans); fill: #fff; }
+:root[data-theme="dark"] .fd-badge text { fill: #10121f; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .fd-badge text { fill: #10121f; } }
+
+.fd-edge { stroke: var(--border-strong); stroke-width: 1.3; stroke-dasharray: 3 5; opacity: .8; }
+.fd-edge.hot { stroke: var(--flow-req); stroke-width: 2.4; stroke-dasharray: none; opacity: 1; }
+.fd-edge.hot-ok { stroke: var(--flow-ok); }
+.fd-edge.hot-ko { stroke: var(--flow-ko); }
+.fd-edge.hot-mcp { stroke: var(--flow-mcp); }
+.fd-edge.hot-llm { stroke: var(--flow-llm); }
+.fd-edge.hot-ghost { stroke: var(--brand); stroke-dasharray: 6 4; opacity: .7; }
+.fd-count { fill: var(--brand); font: 700 12px var(--font-sans); }
+
+.fd-packet circle { r: 7; fill: var(--flow-req); stroke: var(--surface); stroke-width: 2; }
+.fd-packet.ok circle { fill: var(--flow-ok); }
+.fd-packet.ko circle { fill: var(--flow-ko); }
+.fd-packet.mcp circle { fill: var(--flow-mcp); }
+.fd-packet.llm circle { fill: var(--flow-llm); }
+.fd-packet.post circle { fill: var(--human); }
+.fd-node.flash-post > rect { stroke: var(--human); stroke-width: 4; }
+.fd-packet.ghost circle { fill: var(--surface); stroke: var(--brand); stroke-width: 2.4; stroke-dasharray: 3 2; }
+.fd-packet.ghost.ok circle { stroke: var(--flow-ok); }
+.fd-packet.ghost.ko circle { stroke: var(--flow-ko); }
+.fd-packet text { font: 600 11.5px var(--font-mono); fill: var(--text-strong); paint-order: stroke; stroke: var(--surface-2); stroke-width: 5px; stroke-linejoin: round; }
+
+.fd-caption { display: flex; align-items: center; gap: 10px; padding: 9px 14px; min-height: 48px; border-top: 1px solid var(--border); background: var(--surface); font-size: .95rem; color: var(--text-strong); }
+.fd-caption .fd-n { flex: none; font: 700 .78rem var(--font-sans); color: var(--text-muted); min-width: 40px; }
+.fd-caption code, .fd-log code { font-size: .85em; background: var(--surface-3); padding: 0 3px; border-radius: 2px; }
+.fd-caption.ok { box-shadow: inset 4px 0 var(--flow-ok); }
+.fd-caption.ko { box-shadow: inset 4px 0 var(--flow-ko); }
+.fd-caption.req { box-shadow: inset 4px 0 var(--flow-req); }
+.fd-caption.mcp { box-shadow: inset 4px 0 var(--flow-mcp); }
+.fd-caption.llm { box-shadow: inset 4px 0 var(--flow-llm); }
+
+.fd-bar { display: flex; gap: 6px 10px; align-items: center; flex-wrap: wrap; padding: 7px 12px; border-top: 1px solid var(--border); background: var(--surface-2); }
+
+.fd-speed { display: inline-flex; border: 1px solid var(--border-strong); border-radius: var(--radius-s); overflow: hidden; }
+.fd-speed button { border: 0; background: var(--surface); color: var(--text); font: 600 .82rem var(--font-sans); padding: 4px 10px; cursor: pointer; min-height: 30px; }
+.fd-speed button + button { border-left: 1px solid var(--border-strong); }
+.fd-speed button[aria-checked="true"] { background: var(--btn-primary); color: var(--on-brand); }
+.fd-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 0; padding: 0; list-style: none; font-size: .8rem; color: var(--text-muted); }
+.fd-legend li { display: inline-flex; align-items: center; gap: 5px; }
+.fd-legend i { width: 11px; height: 11px; border-radius: 50%; background: var(--flow-req); display: inline-block; }
+.fd-legend i.ok { background: var(--flow-ok); }
+.fd-legend i.ko { background: var(--flow-ko); }
+.fd-legend i.mcp { background: var(--flow-mcp); }
+.fd-legend i.llm { background: var(--flow-llm); }
+.fd-legend i.ghost { background: transparent; border: 2px dashed var(--brand); }
+.fd-legend i.post { background: var(--human); }
+.fd-caption.post { box-shadow: inset 4px 0 var(--human); }
+
+.fd-log { border-top: 1px solid var(--border); padding: 6px 12px 8px; font-size: .86rem; }
+.fd-log summary { cursor: pointer; font-weight: 600; color: var(--brand); }
+.fd-log ol { margin: 6px 0 0; padding-left: 1.6em; display: grid; gap: 3px; }
+.fd-log li.ko::marker { color: var(--flow-ko); }
+.fd-log li.ok::marker { color: var(--flow-ok); }
+
+/* Mock mode: nothing downstream is really called, those nodes stay grey. */
+.fd-node.idle { opacity: .38; filter: grayscale(1); }
+.fd-edge.tool { stroke: var(--flow-mcp); stroke-width: 1.6; stroke-dasharray: 2 4; opacity: .9; }
+.fd-edge-label { font: 700 10.5px var(--font-sans); fill: var(--src-mcp); paint-order: stroke; stroke: var(--surface-2); stroke-width: 3px; }
+.fd-edge-note { font: italic 9.5px var(--font-sans); fill: var(--text-muted); paint-order: stroke; stroke: var(--surface-2); stroke-width: 3px; }

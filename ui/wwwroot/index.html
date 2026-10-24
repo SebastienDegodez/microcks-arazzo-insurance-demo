@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Souscription Pro</title>
+  <meta name="description" content="Poste du conseiller souscription : un dossier Multirisque Pro, ses données, ses analyses et vos décisions.">
+  <script>
+    try { const t = localStorage.getItem('csp.theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch (e) {}
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=Source+Serif+4:opsz,wght@8..60,500;8..60,600;8..60,700&display=swap">
+  <link rel="stylesheet" href="css/tokens.css">
+  <link rel="stylesheet" href="css/app.css">
+  <link rel="stylesheet" href="css/views.css">
+  <link rel="stylesheet" href="css/flow.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='4' fill='%2300008F'/%3E%3Cpath d='M9 22l5-12 4 8 2-3 3 7' stroke='white' stroke-width='2.4' fill='none' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Aller au contenu</a>
+
+  <header class="topbar">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="4"/><path d="M9 22l5-12 4 8 2-3 3 7"/></svg>
+      <div class="brand-text">
+        <span class="brand-name">Souscription Pro</span>
+        <span class="brand-sub">Multirisque Pro · poste du conseiller</span>
+      </div>
+    </div>
+    <div class="topbar-controls">
+      <fieldset class="flip" id="flip">
+        <legend class="flip-legend">Backend du dossier</legend>
+        <label class="flip-option"><input type="radio" name="backend" value="orchestrator"><span>Orchestrateur .NET</span></label>
+        <span class="flip-arrows" aria-hidden="true">⇄</span>
+        <label class="flip-option"><input type="radio" name="backend" value="microcks"><span>Microcks (mock)</span></label>
+      </fieldset>
+      <div class="answered" id="answered" role="status" aria-live="polite">
+        <span class="answered-dot" aria-hidden="true"></span>
+        <span class="answered-label">Réponse :</span>
+        <strong class="answered-value" id="answeredValue">aucune pour l'instant</strong>
+      </div>
+      <button type="button" class="toggle" id="understandToggle" aria-pressed="false" aria-controls="understandPanel">
+        <span class="toggle-track" aria-hidden="true"><span class="toggle-thumb"></span></span>
+        <span>Comprendre</span>
+      </button>
+      <button type="button" class="icon-btn" id="themeToggle" aria-label="Thème : automatique" title="Thème : automatique">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z"/></svg>
+        <span class="theme-text" id="themeText">Auto</span>
+      </button>
+    </div>
+  </header>
+
+  <div class="backend-alert" id="backendAlert" role="alert" hidden></div>
+
+  <div class="workspace" id="workspace">
+    <main id="main" class="page">
+      <section class="intake panel" aria-labelledby="intakeTitle">
+        <div class="intake-head">
+          <h1 id="intakeTitle">Dossier Multirisque Pro</h1>
+          <p class="muted">Choisissez l'entreprise et ouvrez le dossier. Changer d'entreprise ferme le dossier affiché.</p>
+        </div>
+        <form id="intakeForm" class="intake-form" novalidate>
+          <fieldset class="companies">
+            <legend class="sr-only">Entreprise à assurer</legend>
+            <div class="company-grid" id="companyGrid"></div>
+          </fieldset>
+          <div class="intake-actions">
+            <button type="submit" class="btn btn-primary" id="launchBtn">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>Ouvrir le dossier
+            </button>
+            <p class="form-error" id="formError" role="alert" hidden></p>
+          </div>
+        </form>
+      </section>
+
+      <section class="statusbar panel" id="statusbar" aria-label="Où en est le dossier" hidden></section>
+
+      <section class="checkpoints" id="checkpoints" aria-label="Vos points de contrôle"></section>
+
+      <section class="case panel" aria-label="Le dossier">
+        <div class="tabs" role="tablist" aria-label="Vues du dossier" id="tabs"></div>
+        <div id="tabPanels"></div>
+      </section>
+    </main>
+
+    <aside class="understand" id="understandPanel" aria-labelledby="understandTitle" hidden>
+      <div class="understand-head">
+        <h2 id="understandTitle">Comprendre : qui appelle qui</h2>
+        <button type="button" class="icon-btn-plain" id="understandCollapse" aria-label="Replier le panneau Comprendre" title="Replier">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>
+        </button>
+      </div>
+      <p class="muted understand-intro">En direct : chaque paquet suit une étape du dossier ; la cible pulse tant qu'elle travaille.</p>
+      <div id="flowHost"></div>
+    </aside>
+    <button type="button" class="understand-rail" id="understandRail" hidden aria-controls="understandPanel">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg><span>Comprendre</span>
+    </button>
+  </div>
+
+  <dialog id="stepDialog" class="step-dialog"></dialog>
+
+  <footer class="footer"><span>Démo Microcks + Arazzo · données fictives · aucune marque réelle · cartes illustratives</span></footer>
+  <div class="sr-only" id="live" aria-live="polite"></div>
+</body>
+</html>

@@ -1,0 +1,184 @@
+/* Design tokens of "Copilote Souscription Pro": deep blue primary, a rare red accent, light grey canvas,
+   serif headings and sans-serif body. Dark theme: OS preference unless the user picked one (data-theme). */
+:root {
+  color-scheme: light;
+  --font-serif: "Source Serif 4", Georgia, "Times New Roman", serif;
+  --font-sans: "Source Sans 3", "Segoe UI", Helvetica, Arial, sans-serif;
+  --font-mono: SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  --brand: #00008F;
+  --brand-strong: #00006B;
+  --brand-tint: #E9E9F7;
+  --brand-tint-2: #D4D4F0;
+  --on-brand: #FFFFFF;
+  --btn-primary: #00008F;
+  --btn-primary-hover: #00006B;
+  --header-bg: #00008F;
+  --header-text: #FFFFFF;
+  --header-muted: #C9CBF2;
+  --accent: #FF1721;           /* rare: urgent/refusal markers only */
+  --accent-text: #C8000A;      /* accent for text on light surfaces (contrast AA) */
+
+  --canvas: #F2F3F6;
+  --surface: #FFFFFF;
+  --surface-2: #F7F8FA;
+  --surface-3: #ECEEF2;
+  --border: #D5D8E0;
+  --border-strong: #AEB3C2;
+  --text: #1B1C2E;
+  --text-strong: #0D0E1F;
+  --text-muted: #555A6E;
+
+  --ok: #1D7A47;
+  --ok-tint: #E3F3EA;
+  --warn: #9A5300;
+  --warn-tint: #FCF0DE;
+  --danger: #C8000A;
+  --danger-tint: #FDE7E8;
+  --info: #00008F;
+  --info-tint: #E9E9F7;
+  --skip: #6A6F82;
+  --skip-tint: #EEEFF3;
+
+  /* Who is called: one color per kind of source. */
+  --src-state: #00008F;   /* API de l'État */
+  --src-internal: #3D5A80;/* API interne */
+  --human: #00695C;          /* the advisor's checkpoints */
+  --human-strong: #004D40;
+  --human-tint: #E0F2EF;
+  --on-human: #FFFFFF;
+  --queue: #8A6D00;
+  --queue-tint: #FFF6D6;
+  --src-llm: #B34D00;     /* LLM */
+  --src-mcp: #6B3FA0;     /* MCP */
+  --src-rule: #555A6E;    /* règle métier */
+
+  /* Packets of the "Comprendre" diagram. */
+  --flow-req: #1F3BD6;
+  --flow-ok: #1D8A4E;
+  --flow-ko: #E0101B;
+  --flow-mcp: #7B45C2;
+  --flow-llm: #E06A00;
+
+  --radius-s: 3px;
+  --radius-m: 6px;
+  --shadow-1: 0 1px 2px rgba(10, 12, 40, .08), 0 0 0 1px rgba(10, 12, 40, .04);
+  --shadow-2: 0 6px 18px rgba(10, 12, 40, .12);
+  --focus: 0 0 0 3px #FFFFFF, 0 0 0 5px #00008F;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --brand: #A9B1FF;
+    --brand-strong: #C9CEFF;
+    --brand-tint: #1E2150;
+    --brand-tint-2: #2A2E6A;
+    --on-brand: #FFFFFF;
+    --btn-primary: #3434C8;
+    --btn-primary-hover: #4545DA;
+    --header-bg: #13153D;
+    --header-text: #FFFFFF;
+    --header-muted: #B9BCE6;
+    --accent: #FF4A52;
+    --accent-text: #FF7A80;
+    --canvas: #0E0F1A;
+    --surface: #171928;
+    --surface-2: #1C1F31;
+    --surface-3: #24283D;
+    --border: #2E3350;
+    --border-strong: #4A5070;
+    --text: #E4E6F2;
+    --text-strong: #FFFFFF;
+    --text-muted: #A3A8C3;
+    --ok: #5BD08F;
+    --ok-tint: #12301F;
+    --warn: #F2B35C;
+    --warn-tint: #352710;
+    --danger: #FF7A80;
+    --danger-tint: #3A1518;
+    --info: #A9B1FF;
+    --info-tint: #1E2150;
+    --skip: #9A9FB5;
+    --skip-tint: #22253A;
+    --src-state: #A9B1FF;
+    --src-internal: #9DB8DE;
+    --human: #4DD0B8;
+    --human-strong: #7FE3D0;
+    --human-tint: #0F2E29;
+    --on-human: #06201C;
+    --queue: #F0CC5A;
+    --queue-tint: #2E2710;
+    --src-llm: #FF9F4D;
+    --src-mcp: #C39BFF;
+    --src-rule: #A3A8C3;
+    --flow-req: #7D8CFF;
+    --flow-ok: #4FD08A;
+    --flow-ko: #FF5A62;
+    --flow-mcp: #B98CFF;
+    --flow-llm: #FF9A3D;
+    --shadow-1: 0 1px 2px rgba(0, 0, 0, .5), 0 0 0 1px rgba(255, 255, 255, .03);
+    --shadow-2: 0 8px 22px rgba(0, 0, 0, .55);
+    --focus: 0 0 0 3px #0E0F1A, 0 0 0 5px #A9B1FF;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --brand: #A9B1FF;
+  --brand-strong: #C9CEFF;
+  --brand-tint: #1E2150;
+  --brand-tint-2: #2A2E6A;
+  --on-brand: #FFFFFF;
+  --btn-primary: #3434C8;
+  --btn-primary-hover: #4545DA;
+  --header-bg: #13153D;
+  --header-text: #FFFFFF;
+  --header-muted: #B9BCE6;
+  --accent: #FF4A52;
+  --accent-text: #FF7A80;
+  --canvas: #0E0F1A;
+  --surface: #171928;
+  --surface-2: #1C1F31;
+  --surface-3: #24283D;
+  --border: #2E3350;
+  --border-strong: #4A5070;
+  --text: #E4E6F2;
+  --text-strong: #FFFFFF;
+  --text-muted: #A3A8C3;
+  --ok: #5BD08F;
+  --ok-tint: #12301F;
+  --warn: #F2B35C;
+  --warn-tint: #352710;
+  --danger: #FF7A80;
+  --danger-tint: #3A1518;
+  --info: #A9B1FF;
+  --info-tint: #1E2150;
+  --skip: #9A9FB5;
+  --skip-tint: #22253A;
+  --src-state: #A9B1FF;
+  --src-internal: #9DB8DE;
+  --human: #4DD0B8;
+  --human-strong: #7FE3D0;
+  --human-tint: #0F2E29;
+  --on-human: #06201C;
+  --queue: #F0CC5A;
+  --queue-tint: #2E2710;
+  --src-llm: #FF9F4D;
+  --src-mcp: #C39BFF;
+  --src-rule: #A3A8C3;
+  --flow-req: #7D8CFF;
+  --flow-ok: #4FD08A;
+  --flow-ko: #FF5A62;
+  --flow-mcp: #B98CFF;
+  --flow-llm: #FF9A3D;
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, .5), 0 0 0 1px rgba(255, 255, 255, .03);
+  --shadow-2: 0 8px 22px rgba(0, 0, 0, .55);
+  --focus: 0 0 0 3px #0E0F1A, 0 0 0 5px #A9B1FF;
+}
