@@ -2,14 +2,18 @@
 // the previous one, and a node only moves for a call that is really made.
 // - A step that turns RUNNING sends its request to its target, which pulses while it works; the response comes
 //   back when the step ends. Parallel steps leave together.
-// - The climate agent follows its own calls: MCP tools/list, the model (which asks for a tool), the tool run for
-//   the model through reShapr (MCP) → Géorisques (mocked by Microcks), then the model again with the result.
+// - The two tool-using agents follow their own calls: tools/list on each MCP server, the model (which only answers
+//   tool_calls), each tool call executed BY THE ORCHESTRATOR through MCP, then the model again with the results.
+//   The model never calls a tool itself. climate-risk (example 2): reShapr, outside Microcks, exposes Géorisques
+//   and BODACC as MCP servers and calls the Microcks mocks behind them. financial-health (example 1, Microcks
+//   only): the tool is served by the native MCP endpoint of Microcks for the Company financials mock.
 // - In mock mode, Microcks answers instead of the orchestrator: only IHM ⇄ Microcks moves, nothing downstream.
 // - The advisor's POSTs are IHM → orchestrator hops at the click. Everything is recorded for the replay.
 import { FlowDiagram } from './flow-diagram.js';
 import { DECISIONS, PHASES, TERMINAL, blockedByAdvisor, currentPhase, esc, orderedSteps, shortCircuit } from './domain.js';
 
-const IHM = 'ihm', ORCH = 'orch', UW = 'uw', LLM = 'llm', MCP = 'reshapr', GEO = 'svc:Georisques';
+const IHM = 'ihm', ORCH = 'orch', UW = 'uw', LLM = 'llm', MCP = 'reshapr', GEO = 'svc:Georisques', BODACC = 'svc:BODACC';
+const NATIVE = 'svc:Company financials';
 const TARGET = {
   checkAccount: 'svc:Customer accounts', companyIdentity: 'svc:Sirene', legalEvents: 'svc:BODACC',
   financials: 'svc:Company financials', openItems: 'svc:Claims and contracts',
@@ -23,24 +27,48 @@ const AGENT = { dataQuality: 'data-quality', climateRisk: 'climate-risk', financ
 const DEFAULT_MCP_HOST = 'localhost:7778';
 const MOCK_CAPTION = 'Mode mock : Microcks joue l\'orchestrateur, aucun appel réel en aval.';
 
-// The host serving the MCP, for the node's subtitle only: the node is always « reShapr (MCP) ».
+// The host of reShapr, for the node's subtitle only (the native MCP of Microcks is on the Microcks host).
 function mcpHostOf(c) {
-  const call = orderedSteps(c || {}).flatMap(s => s.calls).find(x => x.via === 'MCP');
+  const calls = orderedSteps(c || {}).flatMap(s => s.calls).filter(x => x.via === 'MCP');
+  const call = calls.find(x => /\/reshapr\//i.test(x.url || '')) || calls.find(x => !serverOf(x.url)?.native);
   try { return call ? new URL(call.url).host : null; } catch (e) { return null; }
 }
 
-// How far the climate agent's tool loop went, from its calls (each call shows up once it is over):
-// 0 nothing, 1 tools/list, 2 model asked for a tool, 3 tool run through reShapr, 4 model answered.
-function toolLoopProgress(calls) {
-  const llmIdx = calls.map((x, i) => (x.via === 'LLM' ? i : -1)).filter(i => i >= 0);
-  if (!llmIdx.length) return calls.some(x => x.via === 'MCP') ? 1 : 0;
-  if (llmIdx.length === 1) return calls.slice(llmIdx[0] + 1).some(x => x.via === 'MCP') ? 3 : 2;
-  return 4;
+// The MCP server behind a call URL: reShapr (Géorisques, BODACC) or the native MCP of Microcks (Company financials).
+function serverOf(url) {
+  const u = decodeURIComponent(url || '').toLowerCase();
+  if (u.includes('bodacc')) return { node: MCP, api: BODACC, name: 'BODACC', tool: 'get_annonces', path: 'GET /annonces', result: 'annonces BODACC' };
+  if (u.includes('georisques')) return { node: MCP, api: GEO, name: 'Géorisques', tool: 'get_resultats_rapport_risque', path: 'GET /resultats_rapport_risque', result: 'risques naturels' };
+  if (u.includes('financials')) return { node: NATIVE, native: true, name: 'Company financials', tool: 'get_companies_siren_financials', result: 'comptes annuels' };
+  return null;
 }
-const usesTools = step => step.id === 'climateRisk' && step.kind === 'LLM';
+// The MCP servers each tool-using agent opens, in order, before its calls show up.
+const TOOL_SERVERS = { climateRisk: ['georisques', 'bodacc'], financialHealth: ['financials'] };
+const usesTools = step => step.kind === 'LLM' && (!!TOOL_SERVERS[step.id] || (step.calls || []).some(x => x.via === 'MCP'));
+
+// The agent loop, from the step's calls: tools/list on each of the n servers, LLM (tool_calls), tools/call on each
+// server, LLM (answer): 2n + 2 segments, one per call.
+function toolPlan(step) {
+  const calls = step.calls || [];
+  const firstLlm = calls.findIndex(x => x.via === 'LLM');
+  const seen = firstLlm >= 0 ? calls.slice(0, firstLlm).filter(x => x.via === 'MCP').map(x => serverOf(x.url)).filter(Boolean) : [];
+  const servers = seen.length ? seen : (TOOL_SERVERS[step.id] || []).map(serverOf);
+  const n = servers.length;
+  return { n, servers, total: 2 * n + 2 };
+}
+function segmentOf(plan, k) {
+  const { n, servers } = plan;
+  if (k < n) return { type: 'list', server: servers[k], first: k === 0 };
+  if (k === n) return { type: 'ask' };
+  if (k <= 2 * n) return { type: 'call', server: servers[k - n - 1], first: k === n + 1 };
+  return { type: 'answer' };
+}
+// How far the loop went: each call shows up once it is over.
+const toolLoopProgress = step => Math.min((step.calls || []).length, toolPlan(step).total);
 
 // Portrait layout for the side panel. Outside Microcks: IHM, the orchestrator, reShapr (above the frame).
 // In the frame: Géorisques under reShapr, the LLM gateway and the other mocks in a column fanned from the caller.
+// reShapr links to Géorisques and BODACC; the native MCP of Microcks is the Company financials mock itself.
 function graph(backend, mcpHost) {
   const flip = backend === 'microcks';
   const W = 600, NH = 40, GAP = 12, top = 86;
@@ -68,11 +96,9 @@ function graph(backend, mcpHost) {
     nodes.push({ id: ORCH, label: 'Orchestrateur', sub: '.NET · :5180', kind: 'orch', icon: 'gear', x: 82, y: midY, w: 150, h: 52 });
   }
   // In mock mode nothing downstream is called: those nodes stay at rest (only the bypassed orchestrator is grey).
-  // reShapr is still the model's tool, referenced by the real orchestrator: a dotted link, never a packet.
   const caller = flip ? UW : ORCH;
-  const toolLink = [LLM, MCP, { cls: 'tool', label: 'outil du modèle', note: flip ? ['référencé par l\'orchestrateur réel :', 'appelé seulement quand il tourne'] : null }];
-  const links = flip ? [[IHM, UW], toolLink, [MCP, GEO, { cls: 'rest' }]]
-    : [[IHM, ORCH], ...list.map(t => [ORCH, t.id]), [ORCH, MCP], toolLink, [MCP, GEO]];
+  const links = flip ? [[IHM, UW], [MCP, GEO, { cls: 'rest' }], [MCP, BODACC, { cls: 'rest' }]]
+    : [[IHM, ORCH], ...list.map(t => [ORCH, t.id]), [ORCH, MCP], [MCP, GEO], [MCP, BODACC]];
   const height = Math.max(...nodes.map(n => n.y + (n.h || 42) / 2)) + 14;
   return { nodes, links, frame, width: W, height, caller };
 }
@@ -174,7 +200,7 @@ export class Understand {
       this.fd.clearLog();
       this.fd.replayBtn.disabled = true;
       this.fd.idle(this.flip
-        ? `<b>${MOCK_CAPTION}</b> Seul l'échange IHM ⇄ Microcks (mock de l'orchestrateur) est animé. reShapr reste l'outil du modèle, référencé par l'orchestrateur réel : il n'est appelé que lorsque l'orchestrateur tourne.`
+        ? `<b>${MOCK_CAPTION}</b> Seul l'échange IHM ⇄ Microcks (mock de l'orchestrateur) est animé. Les outils MCP des agents (Géorisques et BODACC via reShapr, comptes annuels via le MCP natif de Microcks) ne sont appelés que par l'orchestrateur réel.`
         : 'Ouvrez un dossier : chaque paquet suit un appel réellement fait par l\'orchestrateur (requête, réponse, MCP, LLM, conseiller).');
     }
   }
@@ -188,7 +214,7 @@ export class Understand {
     steps.forEach(s => {
       if (!this.flip && s.status === 'RUNNING' && !usesTools(s)) this.targetsOf(s).forEach(t => this.fd.busy(t, +1));
       if (s.status === 'WAITING') this.fd.busy(IHM, +1, 'waiting');
-      if (usesTools(s)) this.segDone[s.id] = toolLoopProgress(s.calls);
+      if (usesTools(s)) this.segDone[s.id] = toolLoopProgress(s);
     });
     this.prev = statuses(c);
     this.prevSig = signature(c);
@@ -256,49 +282,67 @@ export class Understand {
     this.chain(step.id, () => { this.fd.busy(target, -1); return this.fd.hop({ from: target, to: ORCH, label, tone: failed ? 'ko' : 'ok' }); });
   }
 
-  // The climate agent's tool loop, segment by segment, as its calls show up.
+  // A tool-using agent's loop, segment by segment, as its calls show up. The model only answers tool_calls: every
+  // tool call leaves from the orchestrator, to reShapr (then the API behind it) or to the native MCP of Microcks.
   startSegment(step, k) {
     const id = step.id;
-    if (k === 0) {
-      this.once('tools-list', '<b>Agent climat</b> : l\'orchestrateur liste les outils de <b>reShapr (MCP)</b> (<code>tools/list</code>).', 'mcp');
-      this.chain(id, () => this.fd.hop({ from: ORCH, to: MCP, label: 'tools/list', tone: 'mcp' }).then(() => this.fd.busy(MCP, +1)));
-    } else if (k === 1) {
-      this.chain(id, () => this.fd.hop({ from: ORCH, to: LLM, label: 'agent climate-risk + outils', tone: 'llm' }).then(() => this.fd.busy(LLM, +1)));
-    } else if (k === 2) {
-      this.once('tool-call', `Le modèle demande l'outil <code>get_resultats_rapport_risque</code> : <b>l'orchestrateur l'exécute pour son compte</b> via reShapr (MCP). <b>reShapr expose Géorisques en MCP ; Microcks simule l'API derrière lui.</b>`, 'mcp');
-      this.chain(id, () => this.fd.hop({ from: LLM, to: MCP, label: 'get_resultats_rapport_risque', tone: 'mcp' })
-        .then(() => { this.fd.busy(MCP, +1); return this.fd.hop({ from: MCP, to: GEO, label: 'GET /resultats_rapport_risque', tone: 'mcp' }); })
-        .then(() => this.fd.busy(GEO, +1)));
-    } else if (k === 3) {
-      this.chain(id, () => this.fd.hop({ from: ORCH, to: LLM, label: 'résultat de l\'outil (role: tool)', tone: 'llm' }).then(() => this.fd.busy(LLM, +1)));
+    const plan = toolPlan(step), seg = segmentOf(plan, k);
+    const agent = AGENT[step.id] || step.id;
+    const who = step.id === 'climateRisk' ? 'Agent climat' : step.id === 'financialHealth' ? 'Agent santé financière' : `Agent ${agent}`;
+    const native = plan.servers.some(x => x?.native);
+    const tools = plan.servers.map(x => `<code>${x?.tool}</code>`).join(' et ');
+    if (seg.type === 'list') {
+      const sv = seg.server;
+      if (seg.first) this.once('tools-list:' + id, native
+        ? `<b>${who}</b> : l'orchestrateur liste l'outil du <b>MCP natif de Microcks</b> (<code>tools/list</code>) : ${tools}, servi par Microcks lui-même à partir du mock Company financials. <b>Microcks pur</b>, sans reShapr.`
+        : `<b>${who}</b> : l'orchestrateur ouvre ${plan.n > 1 ? `les ${plan.n} serveurs MCP` : 'le serveur MCP'} exposés par <b>reShapr</b>, hors de Microcks, et liste leurs outils (<code>tools/list</code>) : ${plan.servers.map(x => x?.name).join(' et ')}.`, 'mcp');
+      this.chain(id, () => this.fd.hop({ from: ORCH, to: sv.node, label: sv.native ? 'MCP tools/list' : `tools/list · ${sv.name}`, tone: 'mcp' }).then(() => this.fd.busy(sv.node, +1)));
+    } else if (seg.type === 'ask') {
+      this.once('tools-ask:' + id, `<b>${who}</b> : le modèle reçoit ${plan.n > 1 ? `ses ${plan.n} outils` : 'son outil'}. Il n'appelle rien lui-même : il répond à l'orchestrateur par ${plan.n > 1 ? `${plan.n} <code>tool_calls</code>` : 'un <code>tool_call</code>'}.`, 'llm');
+      this.chain(id, () => this.fd.hop({ from: ORCH, to: LLM, label: `agent ${agent} + ${plan.n} outil${plan.n > 1 ? 's' : ''}`, tone: 'llm' }).then(() => this.fd.busy(LLM, +1)));
+    } else if (seg.type === 'call') {
+      const sv = seg.server;
+      if (seg.first) this.once('tool-call:' + id, native
+        ? `Le modèle demande ${tools} : <b>l'orchestrateur l'exécute</b> sur le <b>MCP natif de Microcks</b>. Microcks sert lui-même l'outil, à partir de son mock : <b>Microcks pur</b>.`
+        : `Le modèle demande ${tools} : <b>l'orchestrateur les exécute</b> via reShapr (MCP). <b>reShapr expose ${plan.servers.map(x => x?.name).join(' et ')} en MCP ; Microcks simule les API derrière lui.</b>`, 'mcp');
+      if (sv.native) this.chain(id, () => this.fd.hop({ from: ORCH, to: sv.node, label: sv.tool, tone: 'mcp' }).then(() => this.fd.busy(sv.node, +1)));
+      else this.chain(id, () => this.fd.hop({ from: ORCH, to: sv.node, label: sv.tool, tone: 'mcp' })
+        .then(() => { this.fd.busy(sv.node, +1); return this.fd.hop({ from: sv.node, to: sv.api, label: sv.path, tone: 'mcp' }); })
+        .then(() => this.fd.busy(sv.api, +1)));
+    } else {
+      this.chain(id, () => this.fd.hop({ from: ORCH, to: LLM, label: `résultat${plan.n > 1 ? 's des outils' : ' de l\'outil'} (role: tool)`, tone: 'llm' }).then(() => this.fd.busy(LLM, +1)));
     }
   }
 
   endSegment(step, k, failed) {
     const id = step.id;
     const tone = failed ? 'ko' : 'ok';
-    if (k === 0) this.chain(id, () => { this.fd.busy(MCP, -1); return this.fd.hop({ from: MCP, to: ORCH, label: 'outils', tone }); });
-    else if (k === 1) this.chain(id, () => { this.fd.busy(LLM, -1); return this.fd.hop({ from: LLM, to: ORCH, label: 'tool_calls', tone }); });
-    else if (k === 2) {
-      this.chain(id, () => { this.fd.busy(GEO, -1); return this.fd.hop({ from: GEO, to: MCP, label: '200', tone }); })
-        .then(() => this.chain(id, () => { this.fd.busy(MCP, -1); return this.fd.hop({ from: MCP, to: ORCH, label: 'risques naturels', tone }); }));
-    } else if (k === 3) this.chain(id, () => { this.fd.busy(LLM, -1); return this.fd.hop({ from: LLM, to: ORCH, label: `200 · ${step.result?.level || 'climat'}`, tone }); });
+    const plan = toolPlan(step), seg = segmentOf(plan, k), sv = seg.server;
+    if (seg.type === 'list') this.chain(id, () => { this.fd.busy(sv.node, -1); return this.fd.hop({ from: sv.node, to: ORCH, label: sv.tool, tone }); });
+    else if (seg.type === 'ask') this.chain(id, () => { this.fd.busy(LLM, -1); return this.fd.hop({ from: LLM, to: ORCH, label: plan.n > 1 ? `${plan.n} tool_calls` : 'tool_call', tone }); });
+    else if (seg.type === 'call') {
+      if (sv.native) this.chain(id, () => { this.fd.busy(sv.node, -1); return this.fd.hop({ from: sv.node, to: ORCH, label: sv.result, tone }); });
+      else this.chain(id, () => { this.fd.busy(sv.api, -1); return this.fd.hop({ from: sv.api, to: sv.node, label: '200', tone }); })
+        .then(() => this.chain(id, () => { this.fd.busy(sv.node, -1); return this.fd.hop({ from: sv.node, to: ORCH, label: sv.result, tone }); }));
+    } else this.chain(id, () => { this.fd.busy(LLM, -1); return this.fd.hop({ from: LLM, to: ORCH, label: `200 · ${step.result?.level || AGENT[id] || ''}`, tone }); });
   }
 
   // Catches up with the calls the step made since the last poll; at the end, closes what is still open.
   advanceTools(step, finished) {
     const id = step.id;
+    const total = toolPlan(step).total;
     let done = this.segDone[id] || 0;
-    const target = finished ? Math.max(toolLoopProgress(step.calls), step.status === 'DONE' ? 4 : 0) : toolLoopProgress(step.calls);
+    const progress = toolLoopProgress(step);
+    const target = finished ? Math.max(progress, step.status === 'DONE' ? total : 0) : progress;
     const failed = step.status === 'FAILED';
     if (this.started[id] === undefined) this.started[id] = done - 1;
     while (done < target) {
       if (this.started[id] < done) { this.startSegment(step, done); this.started[id] = done; }
       this.endSegment(step, done, false);
       done++;
-      if (done < 4 && (!finished || done < target)) { this.startSegment(step, done); this.started[id] = done; }
+      if (done < total && (!finished || done < target)) { this.startSegment(step, done); this.started[id] = done; }
     }
-    if (finished && failed && this.started[id] === done && done < 4) this.endSegment(step, done, true);
+    if (finished && failed && this.started[id] === done && done < total) this.endSegment(step, done, true);
     this.segDone[id] = done;
   }
 
@@ -418,7 +462,7 @@ export class Understand {
       1: '<b>Phase 1 — éligibilité.</b> L\'orchestrateur vérifie d\'abord le compte client dans le CRM interne.',
       2: `<b>Phase 2 — collecte en parallèle.</b> ${running > 1 ? running + ' appels partent' : 'Les appels partent'} vers les API de l'État et internes, en ordre dispersé ; le contrôle qualité démarre dès que l'identité et le bilan sont là.`,
       3: '<b>Phase 3 — le conseiller valide les données.</b> Sa validation débloque l\'analyse financière.',
-      4: '<b>Phase 4 — analyses</b> par la passerelle LLM mockée par Microcks, <b>2 créneaux au maximum</b>. L\'agent climat va chercher les risques naturels avec son outil MCP.',
+      4: '<b>Phase 4 — analyses</b> par la passerelle LLM mockée par Microcks, <b>2 créneaux au maximum</b>. Deux agents ont des outils MCP, que le modèle demande et que <b>l\'orchestrateur exécute</b> : l\'agent climat interroge Géorisques et BODACC <b>via reShapr</b> ; l\'agent santé financière lit les comptes annuels avec l\'outil du <b>MCP natif de Microcks</b>.',
       5: '<b>Phase 5 — synthèse</b> : une suggestion <b>consultative</b>, à partir des analyses.',
       6: '<b>Phase 6 — décision du conseiller.</b> C\'est lui qui décide.',
     }[phase];

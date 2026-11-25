@@ -12,14 +12,30 @@ public sealed class MicrocksFixture : IAsyncLifetime
     /// <summary>Local uber image built from origin/feature/arazzo (see section 5).</summary>
     private const string DefaultImage = "microcks-uber:feature-arazzo";
 
+    private static readonly string[] Apis =
+    [
+        "customer-accounts", "sirene", "bodacc", "georisques", "company-financials", "claims-and-contracts",
+        "llm-gateway", "underwriting-cases",
+    ];
+
+    /// <summary>The pure API definitions, then the Arazzo documents.</summary>
     private static readonly string[] MainArtifacts =
     [
-        "customer-accounts.openapi.yaml", "sirene.openapi.yaml", "bodacc.openapi.yaml", "georisques.openapi.yaml",
-        "company-financials.openapi.yaml", "claims-and-contracts.openapi.yaml", "llm-gateway.openapi.yaml",
-        "underwriting-cases.openapi.yaml", "underwriting.arazzo.yaml", "underwriting-guards.arazzo.yaml",
+        .. Apis.Select(api => $"{api}.openapi.yaml"),
+        "underwriting.arazzo.yaml", "underwriting-guards.arazzo.yaml", "underwriting-tools.arazzo.yaml",
     ];
-    private static readonly string[] ArazzoSourcesOverlays =
-        ["underwriting.arazzo-sources.yaml", "underwriting-guards.arazzo-sources.yaml"];
+
+    /// <summary>
+    /// Microcks-only files: APIMetadata (dispatchers, latency) before APIExamples, so that the examples get their
+    /// dispatch criteria; then the ArazzoSources overlays, which link the sources.
+    /// </summary>
+    private static readonly string[] SecondaryArtifacts =
+    [
+        .. Apis.Select(api => $"{api}.microcks-metadata.yaml"),
+        .. Apis.Select(api => $"{api}.microcks-examples.yaml"),
+        "underwriting.arazzo-sources.yaml", "underwriting-guards.arazzo-sources.yaml",
+        "underwriting-tools.arazzo-sources.yaml",
+    ];
 
     private MicrocksContainer? _container;
 
@@ -40,7 +56,7 @@ public sealed class MicrocksFixture : IAsyncLifetime
 
         _container = new MicrocksBuilder(Environment.GetEnvironmentVariable("MICROCKS_IMAGE") ?? DefaultImage)
             .WithMainArtifacts(MainArtifacts.Select(Contract).ToArray())             // imported in this order
-            .WithSecondaryArtifacts(ArazzoSourcesOverlays.Select(Contract).ToArray()) // the overlays link the sources
+            .WithSecondaryArtifacts(SecondaryArtifacts.Select(Contract).ToArray())   // imported in this order
             // HttpArazzoMinionClient reads @Value("${arazzo-minion.url}") without default, and the uber
             // config/application.properties does not set it. The environment property source resolves
             // arazzo-minion.url from ARAZZO_MINION_URL. No minion runs here: only runs would need it.
@@ -64,6 +80,18 @@ public sealed class MicrocksFixture : IAsyncLifetime
 
     /// <summary>Microcks' native MCP endpoint of an API (Streamable HTTP, JSON-RPC).</summary>
     public string McpEndpoint(string apiName) => new Uri(BaseUrl, $"mcp/{Uri.EscapeDataString(apiName)}/1.0.0").AbsoluteUri;
+
+    /// <summary>
+    /// reShapr gateway of the demo (scripts/start-reshapr.sh), e.g. http://localhost:7778, or null. Only with
+    /// MICROCKS_URL: reShapr calls the Microcks mocks of the demo stack.
+    /// </summary>
+    public static string? ReshaprUrl => Environment.GetEnvironmentVariable("RESHAPR_MCP_URL") is { Length: > 0 } url
+        ? url.TrimEnd('/') : null;
+
+    /// <summary>A climate tool: through reShapr (scripts/start-reshapr.sh), or on Microcks' native MCP endpoint.</summary>
+    public string ClimateToolEndpoint(string apiName, bool throughReshapr) => throughReshapr
+        ? $"{ReshaprUrl ?? throw new InvalidOperationException("RESHAPR_MCP_URL is not set")}/mcp/reshapr/{apiName.ToLowerInvariant()}-1-0-0-default"
+        : McpEndpoint(apiName);
 
     /// <summary>A client for the Microcks API (no authentication: uber image and demo stack run without Keycloak).</summary>
     public ArazzoVerificationClient Arazzo() =>

@@ -25,6 +25,10 @@ MICROCKS_IMAGE=microcks-uber:feature-arazzo dotnet test --logger "console;verbos
 ../../scripts/import-contracts.sh
 MICROCKS_URL=http://localhost:8080 dotnet test --logger "console;verbosity=detailed"
 
+# Exemple 2 des outils MCP : l'agent climat passe par reShapr (scripts/start-reshapr.sh d'abord)
+MICROCKS_URL=http://localhost:8080 RESHAPR_MCP_URL=http://localhost:7778 dotnet test \
+  --logger "console;verbosity=detailed" --filter "FullyQualifiedName~TheClimateAgentToolsGoThroughReshapr"
+
 # Côté fournisseur (acte 4) : seulement avec la stack de démo, car le minion n'a pas d'image
 MICROCKS_URL=http://localhost:8080 dotnet test --logger "console;verbosity=detailed" \
   --filter "FullyQualifiedName~TheOrchestratorApiHonoursTheAdvisorJourney"
@@ -44,8 +48,14 @@ Chaque test imprime le verdict de Microcks : les étapes, puis les appels reçus
 | `AnUnknownCustomerStopsTheCase` | 5 | vert | vert |
 | `ACollectiveProcedureStopsTheAnalyses` | 5 | vert | vert |
 | `TwoCasesInParallelStayIsolated` | 5 | vert | vert |
+| `AnOrchestratorThatForgetsAToolIsCaught` | outils | vert (`climateRisk` FAILED : `LLM : réponse HTTP 400`, `missing-tools`) | non relevé |
+| `TheClimateAgentToolsGoThroughReshapr` | outils | vert avec `RESHAPR_MCP_URL` (session : Géorisques avec le code INSEE de Sirene, puis un second BODACC, appelés par reShapr) ; sauté sinon | sauté |
 
-La suite complète passe aussi en parallèle, en environ 15 s, dans les deux modes. Le test de l'acte 2 lancé deux
+Relevé du 2026-11-24 (après le passage à Microsoft Agent Framework et au SDK MCP, et aux dispatchers JS) : stack de
+démo, 9 verts et 1 sauté sans reShapr, 10 verts avec `RESHAPR_MCP_URL`. La suite prend environ une minute : l'endpoint
+MCP natif de Microcks, qui sert l'outil de l'agent santé financière, ignore `x-microcks-delay` (30 à 60 s).
+
+Avant le passage aux agents à outils, la suite complète passait en parallèle en environ 15 s, dans les deux modes. Le test de l'acte 2 lancé deux
 fois reçoit les 4 appels de collecte dans un ordre différent, et reste vert.
 
 À savoir :

@@ -7,6 +7,7 @@ The data below is the one source of truth: the mocks of the seven APIs, the LLM 
 orchestrator mock, the Arazzo workflows and their examples are all derived from it, so they stay consistent.
 """
 import json
+import textwrap
 import re
 from pathlib import Path
 
@@ -14,8 +15,12 @@ ROOT = Path(__file__).resolve().parent.parent
 CONTRACTS = ROOT / "contracts"
 
 MICROCKS = "http://localhost:8080"
-# Georisques is exposed in MCP by reShapr (Microcks simulates the REST API behind it), as the orchestrator calls it.
-MCP_URL = "http://localhost:7778/mcp/reshapr/georisques-1-0-0-default"
+# Two ways to hand MCP tools to an LLM agent:
+# - climate-risk: reShapr exposes Georisques and BODACC as MCP servers; Microcks simulates the REST APIs behind them.
+# - financial-health: "pure Microcks", the native MCP endpoint of the Company financials mock.
+RESHAPR_GEORISQUES_MCP = "http://localhost:7778/mcp/reshapr/georisques-1-0-0-default"
+RESHAPR_BODACC_MCP = "http://localhost:7778/mcp/reshapr/bodacc-1-0-0-default"
+MICROCKS_FINANCIALS_MCP = f"{MICROCKS}/mcp/Company%20financials/1.0.0"
 CREATED_AT = "2026-10-22T09:00:00Z"
 
 
@@ -31,11 +36,11 @@ SERVICE_DELAY = {"delay": 6000, "delayStrategy": "random-80"}
 BODACC_DELAY = {"delay": 20000, "delayStrategy": "random-50"}
 FINANCIALS_DELAY = {"delay": 45000, "delayStrategy": "random-33"}
 LLM_DELAY = {"delay": 12000, "delayStrategy": "random-50"}
-# Not in a contract: the orchestrator sends it as x-microcks-delay headers to the financial-health agent only.
-FINANCIAL_HEALTH_HEADER_DELAY = {"delay": 50000, "delayStrategy": "random-20"}
-SERVICE_SPREAD, BODACC_SPREAD, FINANCIALS_SPREAD, LLM_SPREAD, FINANCIAL_HEALTH_SPREAD = (
-    int(x["delayStrategy"].split("-")[1])
-    for x in (SERVICE_DELAY, BODACC_DELAY, FINANCIALS_DELAY, LLM_DELAY, FINANCIAL_HEALTH_HEADER_DELAY))
+SERVICE_SPREAD, BODACC_SPREAD, FINANCIALS_SPREAD, LLM_SPREAD = (
+    int(x["delayStrategy"].split("-")[1]) for x in (SERVICE_DELAY, BODACC_DELAY, FINANCIALS_DELAY, LLM_DELAY))
+# How long the tool-using agents take in the orchestrator mock: model, tool calls (one after the other), model.
+CLIMATE_DURATION_JS = "llm() + service() + bodacc() + llm()"
+FINANCIAL_HEALTH_DURATION_JS = "llm() + financials() + llm()"
 JITTER_MIN, JITTER_MAX = 300, 5000  # a ready step waits this long before it starts
 LLM_SLOTS = 2  # at most two LLM calls at the same time; the other ready analyses are QUEUED
 
@@ -277,6 +282,9 @@ def write(name, doc, header=None):
 # Helpers to build OpenAPI documents
 # --------------------------------------------------------------------------------------------------------------
 
+MOCK_NOTES = {'Customer accounts': 'Dispatch on the siren path part. SIREN 999999999 has no account (404).', 'Sirene': 'Dispatch on the siren path part.', 'BODACC': 'JS dispatcher on the siren query parameter. Transports Express Nord (100000003) has a receivership judgment. Also exposed as MCP by reShapr, as a tool of the climate-risk agent.', 'Georisques': 'JS dispatcher on code_insee; latlon (longitude,latitude) is accepted as is. Also exposed as MCP by reShapr, as a tool of the climate-risk agent.', 'Company financials': "Dispatch on the siren path part. Also served by Microcks' native MCP endpoint (/mcp/Company%20financials/1.0.0), as the tool of the financial-health agent.", 'Claims and contracts': 'Dispatch on the customerId path part.', 'LLM gateway': "The JS dispatcher answers according to metadata.agent and metadata.siren of the body (example <agent>-<siren>). climate-risk must be offered get_resultats_rapport_risque and get_annonces (Géorisques and BODACC through reShapr), financial-health get_companies_siren_financials (Microcks' native MCP), each with its required arguments, else 400 missing-tools. Until the request carries a role: tool message, the answer is the tool_calls (example <agent>-<siren>-tool-calls), then the final answer.", 'Underwriting cases': 'Stateful mock that behaves like the orchestrator, timing included: the POST draws the duration of each step (services 1.2 to 10.8 s, BODACC 10 to 30 s, financial statements 30 to 60 s, LLM 6 to 18 s; tool-using agents chain LLM, tools and LLM) and its start offset (0.3 to 5 s), and keeps them in the store; each GET computes the case from the elapsed time, following dependsOn and 2 LLM slots (a ready LLM step beyond that is QUEUED). Responses are rendered by templating (caseJson variable set by the script).'}
+
+
 def openapi(title, description, paths, schemas):
     return {"openapi": "3.0.3",
             "info": {"title": title, "version": "1.0.0", "description": description},
@@ -337,17 +345,16 @@ def customer_accounts():
     found = {ex(s): customer_body(s) for s in COMPANIES}
     return openapi(
         "Customer accounts",
-        "CRM interne : retrouve le compte client d'une entreprise par son SIREN. Le SIREN 999999999 n'a pas de "
-        "compte (404).",
+        'Internal CRM: finds the customer account of a company by its SIREN (French company number).',
         {"/customers/by-siren/{siren}": {"get": {
             "operationId": "getCustomerBySiren",
-            "summary": "Retrouver un compte client par SIREN",
+            "summary": "Find a customer account by SIREN",
             "parameters": [param("siren", "path", {**{ex(s): s for s in COMPANIES},
                                                    "unknown-" + UNKNOWN_SIREN: UNKNOWN_SIREN})],
             "x-microcks-operation": {**SERVICE_DELAY, "dispatcher": "URI_PARTS", "dispatcherRules": "siren"},
             "responses": {
-                "200": {"description": "Le compte client", "content": json_content("Customer", found)},
-                "404": {"description": "Aucun compte client pour ce SIREN",
+                "200": {"description": "The customer account", "content": json_content("Customer", found)},
+                "404": {"description": "No customer account for this SIREN",
                         "content": json_content("Error", {"unknown-" + UNKNOWN_SIREN: NOT_FOUND_CUSTOMER})}}}}},
         {"Customer": obj({"customerId": STR, "siren": STR, "name": STR,
                           "segment": {"type": "string", "enum": ["TPE", "PME", "ETI"]},
@@ -366,13 +373,13 @@ def sirene_body(siren):
 def sirene():
     return openapi(
         "Sirene",
-        "Identité des entreprises (inspirée de l'API Sirene de l'INSEE), simplifiée pour la démo.",
+        'Company identity, inspired by the INSEE Sirene API, simplified for the demo.',
         {"/siren/{siren}": {"get": {
             "operationId": "getUniteLegale",
-            "summary": "Identité d'une entreprise par SIREN",
+            "summary": "Company identity by SIREN",
             "parameters": [param("siren", "path", {ex(s): s for s in COMPANIES})],
             "x-microcks-operation": {**SERVICE_DELAY, "dispatcher": "URI_PARTS", "dispatcherRules": "siren"},
-            "responses": {"200": {"description": "L'unité légale",
+            "responses": {"200": {"description": "The legal unit",
                                   "content": json_content("UniteLegale", {ex(s): sirene_body(s) for s in COMPANIES})}}}}},
         {"UniteLegale": obj({"siren": STR, "denomination": STR, "nafCode": STR, "nafLabel": STR,
                              "headcountRange": STR, "creationDate": {"type": "string", "format": "date"},
@@ -386,17 +393,41 @@ def bodacc_body(siren):
     return {"total": len(records), "records": records}
 
 
+# JS rather than URI_PARAMS for the query-string APIs that are also MCP tools: with URI_PARAMS, the MCP tools/call
+# of Microcks doubles the query string when it computes the dispatch criteria ("?siren=…?siren"), so no example
+# matches. The request parameters work for REST, for reShapr and for the native MCP endpoint alike.
+JS_QUERY_PARAM = """// The request parameters over REST; the query string of the URL for an MCP tools/call, whose request has none.
+function queryParam(name) {
+  const request = mockRequest.getRequest();
+  const values = (request.parameters || {})[name];
+  if (values && values.length > 0) return values[0];
+  const query = request.queryString || (request.requestURL || "").split("?").slice(1).join("&");
+  for (const pair of query.split(/[?&]/)) {
+    const [key, value] = pair.split("=");
+    if (decodeURIComponent(key || "") === name) return decodeURIComponent((value || "").replace(/\\+/g, " "));
+  }
+  return null;
+}
+"""
+
+
 def bodacc():
+    bodacc_script = (
+        JS_QUERY_PARAM
+        + "const siren = queryParam(\"siren\");\n"
+        f"if ({json.dumps(list(COMPANIES))}.includes(siren)) {{\n"
+        "  return \"siren-\" + siren;\n"
+        "}\n"
+        "return \"unknown\";\n")
     return openapi(
         "BODACC",
-        "Annonces légales (inspirées de l'API BODACC), filtrées par SIREN. Transports Express Nord (100000003) a un "
-        "jugement de redressement judiciaire.",
+        'Legal announcements of a company, inspired by the BODACC API, filtered by SIREN.',
         {"/annonces": {"get": {
             "operationId": "searchAnnonces",
-            "summary": "Annonces BODACC d'une entreprise",
+            "summary": "BODACC announcements of a company",
             "parameters": [param("siren", "query", {ex(s): s for s in COMPANIES})],
-            "x-microcks-operation": {**BODACC_DELAY, "dispatcher": "URI_PARAMS", "dispatcherRules": "siren"},
-            "responses": {"200": {"description": "Les annonces",
+            "x-microcks-operation": {**BODACC_DELAY, "dispatcher": "JS", "dispatcherRules": bodacc_script},
+            "responses": {"200": {"description": "The announcements",
                                   "content": json_content("Annonces", {ex(s): bodacc_body(s) for s in COMPANIES})}}}}},
         {"Annonces": obj({"total": INT, "records": {"type": "array", "items": {"$ref": "#/components/schemas/Annonce"}}}),
          "Annonce": obj({"type": {"type": "string", "enum": ["IMMATRICULATION", "MODIFICATION", "PROCEDURE_COLLECTIVE",
@@ -416,31 +447,27 @@ def insee(siren):
 def georisques():
     examples = {"insee-" + insee(s): s for s in COMPANIES}
     georisques_script = (
-        "def codeInsee = mockRequest.getRequest()?.getParameter(\"code_insee\")\n"
-        f"if ({json.dumps([insee(s) for s in COMPANIES])}.contains(codeInsee)) {{\n"
-        "   return \"insee-\" + codeInsee\n"
+        JS_QUERY_PARAM
+        + "const codeInsee = queryParam(\"code_insee\");\n"
+        f"if ({json.dumps([insee(s) for s in COMPANIES])}.includes(codeInsee)) {{\n"
+        "  return \"insee-\" + codeInsee;\n"
         "}\n"
-        "return \"unknown\"\n")
+        "return \"unknown\";\n")
     return openapi(
         "Georisques",
-        "Risques naturels d'une adresse (inspiré du rapport de risques de Géorisques), simplifié pour la démo. "
-        "Le mock répond selon code_insee ; latlon (longitude,latitude) est accepté tel quel. Exposé aussi en MCP "
-        "par Microcks.",
+        'Natural risks of an address, inspired by the Géorisques risk report, simplified for the demo.',
         {"/resultats_rapport_risque": {"get": {
             "operationId": "getRapportRisque",
-            "summary": "Rapport des risques naturels d'une commune et d'un point",
-            "description": "Renvoie les risques naturels connus pour une commune (code INSEE) et un point "
-                           "(longitude,latitude).",
+            "summary": "Natural risk report of a municipality and a point",
+            "description": "Returns the known natural risks of a municipality (INSEE code) and a point (longitude,latitude).",
             "parameters": [
                 param("code_insee", "query", {k: insee(s) for k, s in examples.items()},
-                      "Code INSEE de la commune, par exemple 17300."),
+                      "INSEE code of the municipality, for example 17300."),
                 param("latlon", "query", {k: latlon(s) for k, s in examples.items()},
-                      "Longitude et latitude séparées par une virgule, par exemple -1.152,46.1591.")],
-            # SCRIPT rather than URI_PARAMS: with URI_PARAMS, the MCP tools/call of Microcks doubles the query
-            # string when it computes the dispatch criteria (BasicHttpServletRequest.getRequestURL already holds it),
-            # so no example matches. getParameter works both for REST and for MCP.
-            "x-microcks-operation": {**SERVICE_DELAY, "dispatcher": "SCRIPT", "dispatcherRules": georisques_script},
-            "responses": {"200": {"description": "Le rapport de risques",
+                      "Longitude and latitude separated by a comma, for example -1.152,46.1591.")],
+            # JS rather than URI_PARAMS: see JS_QUERY_PARAM.
+            "x-microcks-operation": {**SERVICE_DELAY, "dispatcher": "JS", "dispatcherRules": georisques_script},
+            "responses": {"200": {"description": "The risk report",
                                   "content": json_content("RapportRisque",
                                                           {k: COMPANIES[s]["risks"] for k, s in examples.items()})}}}}},
         {"RapportRisque": obj({"commune": STR, "risquesNaturels": obj({
@@ -459,13 +486,13 @@ def financials_body(siren):
 def company_financials():
     return openapi(
         "Company financials",
-        "Derniers comptes annuels d'une entreprise (inspirés des données de la Banque de France), simplifiés.",
+        'Latest annual financial statements of a company, inspired by Banque de France data, simplified.',
         {"/companies/{siren}/financials": {"get": {
             "operationId": "getFinancials",
-            "summary": "Derniers comptes annuels d'une entreprise",
+            "summary": "Latest annual financial statements of a company",
             "parameters": [param("siren", "path", {ex(s): s for s in COMPANIES})],
             "x-microcks-operation": {**FINANCIALS_DELAY, "dispatcher": "URI_PARTS", "dispatcherRules": "siren"},
-            "responses": {"200": {"description": "Les comptes annuels",
+            "responses": {"200": {"description": "The financial statements",
                                   "content": json_content("Financials", {ex(s): financials_body(s) for s in COMPANIES})}}}}},
         {"Financials": obj({"siren": STR, "year": INT, "revenue": NUM, "netIncome": NUM, "equity": NUM,
                             "debtRatio": NUM, "cashDays": INT})})
@@ -484,13 +511,13 @@ def claims_and_contracts():
     names = {"customer-" + customer_id(s): s for s in COMPANIES}
     return openapi(
         "Claims and contracts",
-        "Sinistres et contrats internes : les points ouverts d'un client (sinistres, primes impayées, résiliation).",
+        'Internal claims and contracts: the open items of a customer (claims, unpaid premiums, termination).',
         {"/customers/{customerId}/open-items": {"get": {
             "operationId": "getOpenItems",
-            "summary": "Points ouverts d'un client",
+            "summary": "Open items of a customer",
             "parameters": [param("customerId", "path", {k: customer_id(s) for k, s in names.items()})],
             "x-microcks-operation": {**SERVICE_DELAY, "dispatcher": "URI_PARTS", "dispatcherRules": "customerId"},
-            "responses": {"200": {"description": "Les points ouverts du client",
+            "responses": {"200": {"description": "The open items of the customer",
                                   "content": json_content("OpenItems", {k: open_items_body(s) for k, s in names.items()})}}}}},
         {"OpenItems": obj({"customerId": STR,
                            "openClaims": {"type": "array", "items": {"$ref": "#/components/schemas/Claim"}},
@@ -507,8 +534,11 @@ SYSTEM_PROMPTS = {
     "data-quality": "Tu es l'agent qualité des données d'un assureur. Compare les données du CRM, de Sirene et des "
                     "comptes. Réponds en JSON : status, score, issues.",
     "climate-risk": "Tu es l'agent risque climatique d'un assureur. Appelle l'outil get_resultats_rapport_risque "
-                    "pour obtenir les risques naturels du site, puis évalue son exposition. Réponds en JSON : level, score, drivers, rationale.",
-    "financial-health": "Tu es l'agent santé financière d'un assureur. À partir des comptes annuels, évalue la "
+                    "pour obtenir les risques naturels du site, et l'outil get_annonces pour vérifier au BODACC "
+                    "qu'aucun transfert de siège ne rend l'adresse caduque, puis évalue son exposition. Réponds en "
+                    "JSON : level, score, drivers, rationale.",
+    "financial-health": "Tu es l'agent santé financière d'un assureur. Appelle l'outil "
+                        "get_companies_siren_financials pour lire les derniers comptes annuels, puis évalue la "
                         "solidité de l'entreprise. Réponds en JSON : level, score, rationale.",
     "open-items": "Tu es l'agent sinistres et contrats d'un assureur. Évalue les points ouverts du client. Réponds en "
                   "JSON : complexity, manageable, rationale.",
@@ -524,7 +554,7 @@ def llm_user_content(agent, siren):
     elif agent == "climate-risk":
         data = {"address": c["sirene"]["address"]}
     elif agent == "financial-health":
-        data = financials_body(siren)
+        data = {"siren": siren}
     elif agent == "open-items":
         data = open_items_body(siren)
     else:
@@ -532,20 +562,49 @@ def llm_user_content(agent, siren):
     return json.dumps({"siren": siren, "company": c["name"], "data": data}, ensure_ascii=False)
 
 
-GEORISQUES_TOOL = {"type": "function", "function": {
-    "name": "get_resultats_rapport_risque",
-    "description": "Renvoie les risques naturels connus pour une commune (code INSEE) et un point (longitude,latitude).",
-    "parameters": {"type": "object",
-                   "properties": {"code_insee": {"type": "string", "description": "Code INSEE de la commune, par exemple 17300."},
-                                  "latlon": {"type": "string", "description": "Longitude et latitude séparées par une virgule, par exemple -1.152,46.1591."}},
-                   "required": ["code_insee", "latlon"], "additionalProperties": False}}}
+def function_tool(name, description, properties, required):
+    return {"type": "function", "function": {
+        "name": name, "description": description,
+        "parameters": {"type": "object", "properties": properties, "required": required,
+                       "additionalProperties": False}}}
 
 
-def tool_call(siren):
-    return {"id": f"call_georisques_{siren}", "type": "function",
-            "function": {"name": "get_resultats_rapport_risque",
-                         "arguments": json.dumps({"code_insee": insee(siren), "latlon": latlon(siren)},
-                                                    separators=(",", ":"))}}
+# The MCP tools as the orchestrator hands them to the model (tools/list → OpenAI function tools). The names are those
+# of reShapr and of the native MCP endpoint of Microcks, which both derive them from the OpenAPI path.
+GEORISQUES_TOOL = function_tool(
+    "get_resultats_rapport_risque",
+    "Returns the known natural risks of a municipality (INSEE code) and a point (longitude,latitude).",
+    {"code_insee": {"type": "string", "description": "INSEE code of the municipality, for example 17300."},
+     "latlon": {"type": "string", "description": "Longitude and latitude separated by a comma, "
+                                                 "for example -1.152,46.1591."}},
+    ["code_insee", "latlon"])
+BODACC_TOOL = function_tool("get_annonces", "BODACC announcements of a company", {"siren": {"type": "string"}},
+                            ["siren"])
+FINANCIALS_TOOL = function_tool("get_companies_siren_financials", "Latest annual financial statements of a company",
+                                {"siren": {"type": "string"}}, ["siren"])
+# The tools each tool-using agent must be given, with their required arguments: the mock checks them.
+AGENT_TOOLS = {"climate-risk": [GEORISQUES_TOOL, BODACC_TOOL], "financial-health": [FINANCIALS_TOOL]}
+
+
+def tool_calls(agent, siren):
+    """What the model asks for, all at once (parallel tool calls): the orchestrator runs them through MCP."""
+    def call_of(tool, short, arguments):
+        return {"id": f"call_{short}_{siren}", "type": "function",
+                "function": {"name": tool["function"]["name"],
+                             "arguments": json.dumps(arguments, separators=(",", ":"))}}
+    if agent == "climate-risk":
+        return [call_of(GEORISQUES_TOOL, "georisques", {"code_insee": insee(siren), "latlon": latlon(siren)}),
+                call_of(BODACC_TOOL, "bodacc", {"siren": siren})]
+    return [call_of(FINANCIALS_TOOL, "financials", {"siren": siren})]
+
+
+def tool_output(call, siren):
+    name = call["function"]["name"]
+    if name == GEORISQUES_TOOL["function"]["name"]:
+        return COMPANIES[siren]["risks"]
+    if name == BODACC_TOOL["function"]["name"]:
+        return bodacc_body(siren)
+    return financials_body(siren)
 
 
 def completion(name, created, prompt, message, finish_reason):
@@ -558,6 +617,37 @@ def completion(name, created, prompt, message, finish_reason):
                       "total_tokens": prompt_tokens + completion_tokens}}
 
 
+def llm_script():
+    expected = {agent: {t["function"]["name"]: t["function"]["parameters"]["required"] for t in tools}
+                for agent, tools in AGENT_TOOLS.items()}
+    return f"""const body = JSON.parse(mockRequest.getRequestContent() || "{{}}");
+const metadata = body.metadata || {{}};
+const agent = metadata.agent;
+const siren = metadata.siren;
+if (!{js_literal(AGENTS)}.includes(agent) || !{js_literal(LLM_SIRENS)}.includes(siren)) {{
+  return "unsupported";
+}}
+// A tool-using agent must be given its MCP tools, each with its required arguments: this is what the test checks.
+const expected = {js_literal(expected)}[agent];
+if (expected) {{
+  const offered = {{}};
+  (body.tools || []).forEach(tool => {{
+    if (tool && tool.function) offered[tool.function.name] = (tool.function.parameters || {{}}).required || [];
+  }});
+  const complete = Object.keys(expected).every(name =>
+    offered[name] && expected[name].every(argument => offered[name].includes(argument)));
+  if (!complete) {{
+    return "missing-tools";
+  }}
+  // First turn: the model asks for its tools. Once role: tool messages bring their results, it answers.
+  if (!(body.messages || []).some(message => message && message.role === "tool")) {{
+    return agent + "-" + siren + "-tool-calls";
+  }}
+}}
+return agent + "-" + siren;
+"""
+
+
 def llm_gateway():
     req, res = {}, {}
     for siren in LLM_SIRENS:
@@ -567,58 +657,51 @@ def llm_gateway():
                         {"role": "user", "content": llm_user_content(agent, siren)}]
             base = {"model": "gpt-4o-mini", "messages": messages, "response_format": {"type": "json_object"},
                     "metadata": {"agent": agent, "siren": siren}}
-            if agent == "climate-risk":
-                # First turn: the model asks for the Georisques tool (exposed in MCP by reShapr).
-                req[name + "-tool-call"] = {**base, "tools": [GEORISQUES_TOOL]}
-                res[name + "-tool-call"] = completion(
-                    name + "-tool-call", 1792656000 + i, len(messages[1]["content"]),
-                    {"role": "assistant", "content": None, "tool_calls": [tool_call(siren)]}, "tool_calls")
-                # Second turn: the tool result is in a role: tool message, the model answers.
-                messages = messages + [
-                    {"role": "assistant", "content": None, "tool_calls": [tool_call(siren)]},
-                    {"role": "tool", "tool_call_id": tool_call(siren)["id"],
-                     "content": json.dumps(COMPANIES[siren]["risks"], ensure_ascii=False)}]
-                base = {**base, "messages": messages, "tools": [GEORISQUES_TOOL]}
+            if agent in AGENT_TOOLS:
+                calls = tool_calls(agent, siren)
+                # First turn: the model asks for its MCP tools.
+                req[name + "-tool-calls"] = {**base, "tools": AGENT_TOOLS[agent]}
+                res[name + "-tool-calls"] = completion(
+                    name + "-tool-calls", 1792656000 + i, len(messages[1]["content"]),
+                    {"role": "assistant", "content": None, "tool_calls": calls}, "tool_calls")
+                # Second turn: the tool results are in role: tool messages, the model answers.
+                messages = messages + [{"role": "assistant", "content": None, "tool_calls": calls}] + [
+                    {"role": "tool", "tool_call_id": call["id"],
+                     "content": json.dumps(tool_output(call, siren), ensure_ascii=False)} for call in calls]
+                base = {**base, "messages": messages, "tools": AGENT_TOOLS[agent]}
             req[name] = base
             content = json.dumps(COMPANIES[siren]["llm"][agent], ensure_ascii=False)
             res[name] = completion(name, 1792656100 + i, sum(len(m["content"] or "") for m in messages),
                                    {"role": "assistant", "content": content}, "stop")
     req["unsupported"] = {"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "Bonjour"}],
                           "metadata": {"agent": "unknown-agent", "siren": "000000000"}}
-    script = (
-        "def body = new groovy.json.JsonSlurper().parseText(mockRequest.getRequestContent() ?: \"{}\")\n"
-        "def agent = body?.metadata?.agent\n"
-        "def siren = body?.metadata?.siren\n"
-        f"def agents = {json.dumps(AGENTS)}\n"
-        f"def sirens = {json.dumps(LLM_SIRENS)}\n"
-        "if (!agents.contains(agent) || !sirens.contains(siren)) {\n"
-        "   return \"unsupported\"\n"
-        "}\n"
-        "// The climate agent first asks for the Georisques tool, until a role: tool message brings its result.\n"
-        "if (agent == \"climate-risk\" && !(body?.messages ?: []).any { it?.role == \"tool\" }) {\n"
-        "   return agent + \"-\" + siren + \"-tool-call\"\n"
-        "}\n"
-        "return agent + \"-\" + siren\n")
+    s1 = LLM_SIRENS[0]
+    req["missing-tools"] = {"model": "gpt-4o-mini",
+                            "messages": [{"role": "system", "content": SYSTEM_PROMPTS["climate-risk"]},
+                                         {"role": "user", "content": llm_user_content("climate-risk", s1)}],
+                            "tools": [GEORISQUES_TOOL], "metadata": {"agent": "climate-risk", "siren": s1}}
+    script = llm_script()
     ref = lambda n: {"$ref": "#/components/schemas/" + n}
     return openapi(
         "LLM gateway",
-        "Passerelle LLM compatible OpenAI Chat Completions. Le mock Microcks répond selon metadata.agent et "
-        "metadata.siren du corps (exemple <agent>-<siren>) ; la sortie structurée de l'agent est la chaîne JSON de "
-        "choices[0].message.content. L'agent climate-risk appelle un outil : tant que la requête ne contient aucun "
-        "message role: tool, la réponse est un tool_calls get_resultats_rapport_risque (exemple "
-        "climate-risk-<siren>-tool-call, finish_reason tool_calls) ; ensuite, la réponse finale.",
+        "OpenAI-compatible Chat Completions gateway. The agent's structured output is the JSON string of choices[0].message.content. A request may offer tools (OpenAI function tools); the model may then answer with tool_calls (finish_reason tool_calls) instead of content. The model never runs a tool itself: the caller runs each tool call and sends its result back in a role: tool message.",
         {"/v1/chat/completions": {"post": {
             "operationId": "createChatCompletion",
-            "summary": "Créer une complétion de chat (compatible OpenAI)",
-            "x-microcks-operation": {**LLM_DELAY, "dispatcher": "SCRIPT", "dispatcherRules": script},
+            "summary": "Create a chat completion (OpenAI-compatible)",
+            "x-microcks-operation": {**LLM_DELAY, "dispatcher": "JS", "dispatcherRules": script},
             "requestBody": {"required": True, "content": json_content("ChatCompletionRequest", req)},
             "responses": {
-                "200": {"description": "La complétion",
+                "200": {"description": "The completion",
                         "content": json_content("ChatCompletion", {k: v for k, v in res.items()})},
-                "400": {"description": "Agent ou SIREN sans réponse enregistrée",
-                        "content": json_content("OpenAIError", {"unsupported": {"error": {
-                            "message": "Aucune réponse enregistrée pour cet agent et ce SIREN.",
-                            "type": "invalid_request_error", "code": "unsupported_metadata"}}})}}}}},
+                "400": {"description": "Unsupported request: no recorded answer, or expected tools missing",
+                        "content": json_content("OpenAIError", {
+                            "unsupported": {"error": {
+                                "message": "Aucune réponse enregistrée pour cet agent et ce SIREN.",
+                                "type": "invalid_request_error", "code": "unsupported_metadata"}},
+                            "missing-tools": {"error": {
+                                "message": "L'agent n'a pas reçu les outils MCP attendus (nom et arguments "
+                                           "obligatoires) : l'orchestrateur ne les a pas transmis au modèle.",
+                                "type": "invalid_request_error", "code": "missing_tools"}}})}}}}},
         {"ChatCompletionRequest": obj({
             "model": STR, "messages": {"type": "array", "items": ref("Message")},
             "tools": {"type": "array", "items": ref("Tool")},
@@ -656,15 +739,25 @@ STEPS = [  # stepId, label, phase, mode, kind, dependsOn
     ("dataQuality", "Contrôle de la qualité des données", 2, "CHAIN", "LLM",
      ["checkAccount", "companyIdentity", "financials"]),
     ("dataReview", "Validation des données par le conseiller", 3, "CHAIN", "HUMAN", COLLECTION + ["dataQuality"]),
-    ("climateRisk", "Analyse du risque climatique (outil Géorisques via MCP)", 4, "PARALLEL", "LLM",
+    ("climateRisk", "Analyse du risque climatique (outils Géorisques et BODACC via reShapr)", 4, "PARALLEL", "LLM",
      ["companyIdentity", "dataQuality"]),
-    ("financialHealth", "Analyse de la santé financière", 4, "PARALLEL", "LLM",
+    ("financialHealth", "Analyse de la santé financière (outil comptes annuels via le MCP de Microcks)", 4,
+     "PARALLEL", "LLM",
      ["financials", "legalEvents", "dataReview"]),
     ("openItemsReview", "Analyse des sinistres et contrats", 4, "PARALLEL", "LLM", ["openItems", "dataQuality"]),
     ("synthesis", "Synthèse des analyses (consultative)", 5, "CHAIN", "LLM",
      ["climateRisk", "financialHealth", "openItemsReview", "dataReview"]),
     ("advisorDecision", "Décision du conseiller", 6, "CHAIN", "HUMAN", ["synthesis"]),
 ]
+# The MCP servers of each tool-using step, in the order the orchestrator opens them (one tool each).
+TOOL_LOOPS = {"climateRisk": [RESHAPR_GEORISQUES_MCP, RESHAPR_BODACC_MCP], "financialHealth": [MICROCKS_FINANCIALS_MCP]}
+
+
+def loop_vias(step_id):
+    n = len(TOOL_LOOPS[step_id])
+    return ["MCP"] * n + ["LLM"] + ["MCP"] * n + ["LLM"]
+
+
 STEP_AGENT = {"dataQuality": "data-quality", "climateRisk": "climate-risk", "financialHealth": "financial-health",
               "openItemsReview": "open-items", "synthesis": "verdict"}
 
@@ -744,19 +837,22 @@ def done_step(siren, step_id):
         "data-quality": lambda o: f"Données {'cohérentes' if o['status'] == 'VALID' else 'à vérifier'} "
                                   f"(score {o['score']}/100)" + (f" : {o['issues'][0]}" if o["issues"] else "."),
         "climate-risk": lambda o: f"Risque climatique {o['level']} (score {o['score']}/100) : "
-                                  f"{o['drivers'][0].lower()} (Géorisques interrogé par l'outil MCP).",
-        "financial-health": lambda o: f"Santé financière {o['level']} (score {o['score']}/100).",
+                                  f"{o['drivers'][0].lower()} (Géorisques et BODACC interrogés via reShapr).",
+        "financial-health": lambda o: f"Santé financière {o['level']} (score {o['score']}/100) : comptes annuels "
+                                      f"lus par l'outil MCP de Microcks.",
         "open-items": lambda o: f"Sinistres et contrats : complexité {o['complexity']}, "
                                 f"{'gérable' if o['manageable'] else 'non gérable'} en l'état.",
         "verdict": lambda o: f"Suggestion consultative : {DECISION_FR[o['decision']]}"
                              + (f" de {o['surchargePercent']} %" if o["surchargePercent"] else "")
                              + f" (confiance {round(o['confidence'] * 100)} %).",
     }
-    if step_id == "climateRisk":
-        # The agent loop: MCP tools/list, LLM (tool_calls), MCP tools/call (reShapr calls Georisques), LLM (answer).
-        calls = [call("POST", MCP_URL, 200, "MCP"), call("POST", LLM_URL, 200, "LLM"),
-                 call("POST", MCP_URL, 200, "MCP"), call("POST", LLM_URL, 200, "LLM")]
-        return summaries[agent](out), {**out, "naturalRisks": c["risks"]}, calls
+    if step_id in TOOL_LOOPS:
+        # The agent loop: tools/list on each MCP server, LLM (tool_calls), one tools/call per tool, LLM (answer).
+        servers = TOOL_LOOPS[step_id]
+        calls = ([call("POST", url, 200, "MCP") for url in servers] + [call("POST", LLM_URL, 200, "LLM")]
+                 + [call("POST", url, 200, "MCP") for url in servers] + [call("POST", LLM_URL, 200, "LLM")])
+        result = {**out, "naturalRisks": c["risks"]} if step_id == "climateRisk" else out
+        return summaries[agent](out), result, calls
     return summaries[agent](out), out, [call("POST", LLM_URL, 200, "LLM")]
 
 
@@ -832,7 +928,7 @@ def escalation_level(reasons):
 
 
 def script_data(siren):
-    """Everything the Groovy mock needs to tell the story of one SIREN."""
+    """Everything the JavaScript mock needs to tell the story of one SIREN."""
     c = COMPANIES.get(siren)
     known = c is not None
     executed = ["checkAccount"]
@@ -850,303 +946,322 @@ def script_data(siren):
             "steps": steps, "recommendation": recommendation(siren), "reasons": risk_reasons(siren)}
 
 
-def groovy_literal(data):
-    text = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
-    assert "\\" not in text and "'''" not in text, "the data must fit in a Groovy ''' string"
-    assert len(text.encode("utf-8")) < 60000, "a Groovy string constant is limited to 64 KB"
-    return "'''" + text + "'''"
+def js_literal(data):
+    """A JSON value is a JavaScript literal: the data goes into the script as is."""
+    return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
 
 
 STATE_TTL_SECONDS = 7200
 
+# The JavaScript dispatchers run in Microcks' JS engine (dispatcher: JS, QuickJS): the script is the body of a
+# process() function, which returns the name of the response. Builtins: mockRequest, store, requestContext, log.
+JS_PRELUDE = """// Generated by scripts/generate-contracts.py. The mock tells the story of a case from the time elapsed since its
+// POST, with durations drawn at random in the ranges of the orchestrator, and waits for the advisor twice.
+const now = Date.now();
+const META = %%META%%;
+const DECISION_FR = %%DECISION_FR%%;
+const DATA = %%DATA%%;
+const UNKNOWN = %%UNKNOWN%%;
+function dataOf(siren) {
+  if (DATA[siren]) return DATA[siren];
+  return JSON.parse(JSON.stringify(UNKNOWN).split("%%UNKNOWN_SIREN%%").join(siren));
+}
+function iso(ms) { return new Date(ms).toISOString(); }
+function num(v) { return v === null || v === undefined ? null : Number(v); }
+function randomInt(bound) { return Math.floor(Math.random() * bound); }
+function draw(delay, percent) {
+  const spread = Math.floor(delay * percent / 100);
+  return delay - spread + randomInt(2 * spread + 1);
+}
+function saveState(st) { store.putWithTtl("case-" + st.siren, JSON.stringify(st), %%TTL%%); }
+function newState(siren) {
+  const service = () => draw(%%SERVICE%%);
+  const bodacc = () => draw(%%BODACC%%);
+  const financials = () => draw(%%FINANCIALS%%);
+  const llm = () => draw(%%LLM%%);
+  const jitter = {};
+  META.forEach(m => { jitter[m.id] = %%JITTER_MIN%% + randomInt(%%JITTER_SPAN%%); });
+  return {siren: siren, start: now,
+    d: {checkAccount: service(), companyIdentity: service(), legalEvents: bodacc(), financials: financials(),
+        openItems: service(), dataQuality: llm(), climateRisk: %%CLIMATE_DURATION%%,
+        financialHealth: %%FINANCIAL_HEALTH_DURATION%%, openItemsReview: llm(), synthesis: llm(),
+        synthesisRule: 500 + randomInt(701)},
+    j: jitter, review: null, decision: null};
+}
+function loadState(caseId) {
+  if (!/^case-[0-9]{9}$/.test(caseId || "")) return null;
+  const raw = store.get(caseId);
+  return raw === null || raw === undefined ? null : JSON.parse(raw);
+}
+function buildCase(st) {
+  const data = dataOf(String(st.siren));
+  const d = st.d;
+  const j = st.j;
+  const t0 = st.start;
+  const reviewAt = st.review ? st.review.at : null;
+  const decidedAt = st.decision ? st.decision.at : null;
+  const collection = ["companyIdentity", "legalEvents", "financials", "openItems"];
+  const llmPriority = ["dataQuality", "climateRisk", "financialHealth", "openItemsReview", "synthesis"];
+  const depsOf = {};
+  META.forEach(m => { depsOf[m.id] = m.dependsOn; });
+  const tl = {};
+  const skipReason = {};
+  // A ready step waits for its start jitter (PENDING), then, for an LLM, for a free slot (QUEUED), then runs.
+  const run = (id, ready) => { const w = ready + j[id]; tl[id] = {type: "run", want: w, start: w, end: w + d[id]}; };
+  const endOf = ids => Math.max(...ids.map(id => tl[id].type === "skip" ? tl[id].at : tl[id].end));
+  const skip = (id, at, reason) => { tl[id] = {type: "skip", at: at}; skipReason[id] = reason; };
+  run("checkAccount", t0);
+  const e1 = tl.checkAccount.end;
+  if (!data.known) {
+    META.forEach(m => {
+      if (m.id !== "checkAccount" && m.id !== "advisorDecision") skip(m.id, e1, "Non exécutée : compte client introuvable.");
+    });
+    tl.advisorDecision = {type: "human", start: e1, doneAt: decidedAt};
+  } else {
+    collection.forEach(id => run(id, e1));
+    if (data.collective) {
+      // The collective procedure is known when BODACC answers: no LLM is called at all.
+      const legal = tl.legalEvents.end;
+      ["dataQuality", "climateRisk", "openItemsReview"].forEach(id =>
+        skip(id, legal, "Non exécutée : procédure collective au BODACC, aucun LLM appelé."));
+      tl.dataReview = {type: "human", start: endOf(collection.concat(["dataQuality"])), doneAt: reviewAt};
+      if (reviewAt === null) {
+        ["financialHealth", "synthesis", "advisorDecision"].forEach(id => { tl[id] = {type: "notReady"}; });
+      } else {
+        skip("financialHealth", reviewAt, "Non exécutée : procédure collective, aucun LLM appelé.");
+        const w = reviewAt + j.synthesis;
+        tl.synthesis = {type: "run", want: w, start: w, end: w + d.synthesisRule};
+        tl.advisorDecision = {type: "human", start: tl.synthesis.end, doneAt: decidedAt};
+      }
+    } else {
+      // %%LLM_SLOTS%% LLM slots shared by every LLM step; among the ready ones, the priority order decides.
+      const readyAt = id => {
+        const ends = depsOf[id].map(dep => {
+          if (dep === "dataReview") return reviewAt;
+          const t = tl[dep];
+          if (!t || t.type === "notReady") return null;
+          return t.type === "skip" ? t.at : t.end;
+        });
+        return ends.some(e => e === null) ? null : Math.max(...ends);
+      };
+      const slots = new Array(%%LLM_SLOTS%%).fill(0);
+      const waiting = llmPriority.slice();
+      while (true) {
+        const want = {};
+        waiting.forEach(id => { const r = readyAt(id); if (r !== null) want[id] = r + j[id]; });
+        const ids = Object.keys(want);
+        if (ids.length === 0) break;
+        const free = Math.min(...slots);
+        const t = Math.max(free, Math.min(...ids.map(id => want[id])));
+        const pick = ids.filter(id => want[id] <= t)
+          .sort((a, b) => llmPriority.indexOf(a) - llmPriority.indexOf(b))[0];
+        tl[pick] = {type: "run", want: want[pick], start: t, end: t + d[pick]};
+        slots[slots.indexOf(free)] = t + d[pick];
+        waiting.splice(waiting.indexOf(pick), 1);
+      }
+      waiting.forEach(id => { tl[id] = {type: "notReady"}; });
+      tl.dataReview = {type: "human", start: endOf(collection.concat(["dataQuality"])), doneAt: reviewAt};
+      tl.advisorDecision = tl.synthesis.type === "run" ?
+        {type: "human", start: tl.synthesis.end, doneAt: decidedAt} : {type: "notReady"};
+    }
+  }
+  // Something still advances without the advisor: a step waiting for its start, its slot or its answer.
+  const advancing = Object.keys(tl).some(id => {
+    const t = tl[id];
+    return (t.type === "run" && t.end > now) || (t.type === "skip" && t.at > now);
+  });
 
-def groovy_prelude():
-    """The shared Groovy code: data, timeline and Case builder. Each dispatcher appends its own ending."""
+  const corrections = (st.review && st.review.corrections) || {};
+  const reasons = data.reasons.slice();
+  if (corrections.declaredHeadcount != null && !reasons.some(r => r.code === "DATA_INCONSISTENT")) {
+    reasons.push({code: "DATA_INCONSISTENT", label: "Effectif déclaré corrigé par le conseiller : " +
+      data.declaredHeadcount + " → " + corrections.declaredHeadcount, stepId: "dataQuality"});
+  }
+  const codes = reasons.map(r => r.code);
+  const level = (reasons.length >= 2 || codes.includes("COLLECTIVE_PROCEDURE") || codes.includes("UNKNOWN_CUSTOMER")) ?
+    "REINFORCED" : "STANDARD";
+
+  const dataReview = !st.review ? null : {confirmed: st.review.confirmed, corrections: corrections,
+    comment: st.review.comment, reviewedAt: iso(reviewAt)};
+  const advisorDecision = !st.decision ? null : {finalDecision: st.decision.finalDecision,
+    surchargePercent: num(st.decision.surchargePercent), followsRecommendation: st.decision.followsRecommendation,
+    comment: st.decision.comment, acknowledgedReasons: st.decision.acknowledgedReasons, decidedAt: iso(decidedAt)};
+
+  const steps = {};
+  META.forEach(m => {
+    const t = tl[m.id] || {type: "notReady"};
+    const kind = (m.id === "synthesis" && (!data.known || data.collective)) ? "RULE" : m.kind;
+    const s = {label: m.label, phase: m.phase, mode: m.mode, kind: kind, status: "PENDING", dependsOn: m.dependsOn};
+    if (t.type === "skip") {
+      if (now >= t.at) { s.status = "SKIPPED"; s.summary = skipReason[m.id]; }
+    } else if (t.type === "human") {
+      const hs = t.start;
+      if (now >= hs && t.doneAt !== null && t.doneAt !== undefined) {
+        s.status = "DONE"; s.startedAt = iso(hs); s.endedAt = iso(t.doneAt);
+        if (m.id === "dataReview") {
+          s.summary = "Données validées par le conseiller" + (corrections.declaredHeadcount != null ?
+            " (effectif déclaré corrigé : " + data.declaredHeadcount + " → " + corrections.declaredHeadcount + ")" : "") + ".";
+          s.result = dataReview;
+        } else {
+          const sp = num(st.decision.surchargePercent);
+          s.summary = "Décision du conseiller : " + DECISION_FR[st.decision.finalDecision] +
+            (sp !== null && sp > 0 ? " de " + sp + " %" : "") +
+            (st.decision.followsRecommendation ? " (suggestion suivie)." : " (suggestion écartée).");
+          s.result = advisorDecision;
+        }
+      } else if (now >= hs) {
+        s.status = "WAITING"; s.startedAt = iso(hs);
+        if (m.id === "dataReview") {
+          s.summary = "En attente du conseiller : validation des données collectées.";
+        } else if (level === "REINFORCED") {
+          s.summary = "En attente du conseiller : décision renforcée, risque trop important pour " +
+            reasons.length + " raison" + (reasons.length > 1 ? "s" : "") + ".";
+        } else {
+          s.summary = "En attente du conseiller : décision finale.";
+        }
+      }
+    } else if (t.type === "run" && now >= t.want) {
+      if (now < t.start) {
+        s.status = "QUEUED"; s.summary = "Prête, en attente d'un créneau LLM.";
+      } else if (now < t.end) {
+        s.status = "RUNNING"; s.startedAt = iso(t.start);
+      } else {
+        const done = data.steps[m.id];
+        s.status = "DONE"; s.startedAt = iso(t.start); s.endedAt = iso(t.end);
+        s.summary = done.summary; s.result = done.result;
+        s.calls = done.calls;
+      }
+    }
+    if (!s.calls) s.calls = [];
+    steps[m.id] = s;
+  });
+
+  const adv = steps.advisorDecision.status;
+  const pending = adv === "WAITING" ? "DECISION" : (steps.dataReview.status === "WAITING" ? "DATA_REVIEW" : null);
+  const status = adv === "DONE" ? "DECIDED" : (pending !== null && !advancing ? "WAITING_ADVISOR" : "IN_PROGRESS");
+  const c = {caseId: "case-" + st.siren, siren: st.siren, product: "MULTIRISQUE_PRO"};
+  if (data.name) c.companyName = data.name;
+  c.createdAt = iso(t0);
+  c.status = status;
+  c.pendingAction = pending;
+  c.stepOrder = META.map(m => m.id);
+  c.steps = steps;
+  if (adv === "WAITING" || adv === "DONE") c.recommendation = data.recommendation;
+  if (dataReview !== null) c.dataReview = dataReview;
+  if (adv === "WAITING" || adv === "DONE") c.escalation = {level: level, reasons: reasons};
+  if (advisorDecision !== null) c.advisorDecision = advisorDecision;
+  return c;
+}
+// The response body is rendered by templating, from the caseJson variable of the request context.
+function respond(st) {
+  requestContext.set("caseJson", JSON.stringify(buildCase(st)));
+  return "case";
+}
+function requestBody() { return JSON.parse(mockRequest.getRequestContent() || "{}"); }
+"""
+
+
+def js_prelude():
+    """The shared JavaScript code: data, timeline and Case builder. Each dispatcher appends its own ending."""
     meta = [{"id": s[0], "label": s[1], "phase": s[2], "mode": s[3], "kind": s[4], "dependsOn": s[5]}
             for s in STEPS]
-    cases = "\n".join(f"      case \"{s}\": return slurper.parseText({groovy_literal(script_data(s))})"
-                      for s in COMPANIES)
-    unknown = groovy_literal(script_data(UNKNOWN_SIREN))
-    return f"""import groovy.json.JsonOutput
-import groovy.json.JsonSlurper
-import java.time.Instant
-
-// Generated by scripts/generate-contracts.py. The mock tells the story of a case from the time elapsed since its
-// POST, with durations drawn at random in the ranges of the orchestrator, and waits for the advisor twice.
-def slurper = new JsonSlurper()
-def json = new groovy.json.JsonGenerator.Options().disableUnicodeEscaping().build()
-long now = System.currentTimeMillis()
-def META = slurper.parseText({groovy_literal(meta)})
-def DECISION_FR = slurper.parseText({groovy_literal(DECISION_FR)})
-def dataOf = {{ String siren ->
-   switch (siren) {{
-{cases}
-      default: return slurper.parseText({unknown}.replace("{UNKNOWN_SIREN}", siren))
-   }}
-}}
-def iso = {{ long ms -> Instant.ofEpochMilli(ms).toString() }}
-def num = {{ v -> v == null ? null : new BigDecimal(v.toString()) }}
-def saveState = {{ st -> store.put("case-" + st.siren, json.toJson(st), {STATE_TTL_SECONDS}) }}
-def newState = {{ String siren ->
-   def rnd = new Random()
-   def draw = {{ int delay, int percent -> int spread = (delay * percent).intdiv(100); delay - spread + rnd.nextInt(2 * spread + 1) }}
-   def service = {{ -> draw({SERVICE_DELAY["delay"]}, {SERVICE_SPREAD}) }}
-   def bodacc = {{ -> draw({BODACC_DELAY["delay"]}, {BODACC_SPREAD}) }}
-   def financials = {{ -> draw({FINANCIALS_DELAY["delay"]}, {FINANCIALS_SPREAD}) }}
-   def llm = {{ -> draw({LLM_DELAY["delay"]}, {LLM_SPREAD}) }}
-   def financialHealth = {{ -> draw({FINANCIAL_HEALTH_HEADER_DELAY["delay"]}, {FINANCIAL_HEALTH_SPREAD}) }}
-   def jitter = [:]
-   META.each {{ m -> jitter[m.id] = {JITTER_MIN} + rnd.nextInt({JITTER_MAX - JITTER_MIN + 1}) }}
-   [siren: siren, start: now,
-    d: [checkAccount: service(), companyIdentity: service(), legalEvents: bodacc(), financials: financials(),
-        openItems: service(), dataQuality: llm(), climateRisk: llm() + service() + llm(), financialHealth: financialHealth(),
-        openItemsReview: llm(), synthesis: llm(), synthesisRule: 500 + rnd.nextInt(701)],
-    j: jitter, review: null, decision: null]
-}}
-def loadState = {{ String caseId ->
-   def m = caseId =~ /^case-([0-9]{{9}})$/
-   if (!m.matches()) return null
-   def raw = store.get(caseId)
-   return raw == null ? null : slurper.parseText(raw)
-}}
-def buildCase = {{ st ->
-   def data = dataOf(st.siren as String)
-   def d = st.d
-   def j = st.j
-   long t0 = st.start as long
-   Long reviewAt = st.review ? (st.review.at as long) : null
-   Long decidedAt = st.decision ? (st.decision.at as long) : null
-   def collection = ["companyIdentity", "legalEvents", "financials", "openItems"]
-   def llmPriority = ["dataQuality", "climateRisk", "financialHealth", "openItemsReview", "synthesis"]
-   def depsOf = [:]
-   META.each {{ m -> depsOf[m.id] = m.dependsOn }}
-   def tl = [:]
-   def skipReason = [:]
-   // A ready step waits for its start jitter (PENDING), then, for an LLM, for a free slot (QUEUED), then runs.
-   def run = {{ String id, long ready -> long w = ready + (j[id] as long); tl[id] = [type: "run", want: w, start: w, end: w + (d[id] as long)] }}
-   def endOf = {{ ids -> ids.collect {{ def t = tl[it]; (t.type == "skip" ? t.at : t.end) as long }}.max() }}
-   def skip = {{ String id, long at, String reason -> tl[id] = [type: "skip", at: at]; skipReason[id] = reason }}
-   run("checkAccount", t0)
-   long e1 = tl.checkAccount.end as long
-   if (!data.known) {{
-      META.each {{ m -> if (m.id != "checkAccount" && m.id != "advisorDecision") skip(m.id, e1, "Non exécutée : compte client introuvable.") }}
-      tl.advisorDecision = [type: "human", start: e1, doneAt: decidedAt]
-   }} else {{
-      ["companyIdentity", "legalEvents", "financials", "openItems"].each {{ run(it, e1) }}
-      if (data.collective) {{
-         // The collective procedure is known when BODACC answers: no LLM is called at all.
-         long legal = tl.legalEvents.end as long
-         ["dataQuality", "climateRisk", "openItemsReview"].each {{ skip(it, legal, "Non exécutée : procédure collective au BODACC, aucun LLM appelé.") }}
-         tl.dataReview = [type: "human", start: endOf(collection + ["dataQuality"]), doneAt: reviewAt]
-         if (reviewAt == null) {{
-            ["financialHealth", "synthesis", "advisorDecision"].each {{ tl[it] = [type: "notReady"] }}
-         }} else {{
-            skip("financialHealth", reviewAt, "Non exécutée : procédure collective, aucun LLM appelé.")
-            long w = reviewAt + (j.synthesis as long)
-            tl.synthesis = [type: "run", want: w, start: w, end: w + (d.synthesisRule as long)]
-            tl.advisorDecision = [type: "human", start: tl.synthesis.end, doneAt: decidedAt]
-         }}
-      }} else {{
-         // {LLM_SLOTS} LLM slots shared by every LLM step; among the ready ones, the priority order decides.
-         def readyAt = {{ String id ->
-            def ends = depsOf[id].collect {{ dep ->
-               if (dep == "dataReview") return reviewAt
-               def t = tl[dep]
-               return t == null ? null : ((t.type == "skip" ? t.at : t.end) as Long)
-            }}
-            return ends.contains(null) ? null : (ends.max() as long)
-         }}
-         def slots = {[0] * LLM_SLOTS}.collect {{ 0L }}
-         def waiting = llmPriority.collect {{ it }}
-         while (true) {{
-            def want = [:]
-            waiting.each {{ id -> def r = readyAt(id); if (r != null) want[id] = r + (j[id] as long) }}
-            if (want.isEmpty()) break
-            long free = slots.min() as long
-            long t = Math.max(free, want.values().min() as long)
-            def pick = want.keySet().findAll {{ (want[it] as long) <= t }}.min {{ llmPriority.indexOf(it) }}
-            tl[pick] = [type: "run", want: want[pick], start: t, end: t + (d[pick] as long)]
-            slots[slots.indexOf(free)] = t + (d[pick] as long)
-            waiting.remove(pick)
-         }}
-         waiting.each {{ tl[it] = [type: "notReady"] }}
-         tl.dataReview = [type: "human", start: endOf(collection + ["dataQuality"]), doneAt: reviewAt]
-         tl.advisorDecision = tl.synthesis.type == "run" ?
-               [type: "human", start: tl.synthesis.end, doneAt: decidedAt] : [type: "notReady"]
-      }}
-   }}
-   // Something still advances without the advisor: a step waiting for its start, its slot or its answer.
-   def advancing = tl.values().any {{ t -> (t.type == "run" && (t.end as long) > now) || (t.type == "skip" && (t.at as long) > now) }}
-
-   def corrections = st.review?.corrections ?: [:]
-   def reasons = data.reasons.collect {{ it }}
-   if (corrections.declaredHeadcount != null && !reasons.any {{ it.code == "DATA_INCONSISTENT" }}) {{
-      reasons << [code: "DATA_INCONSISTENT", label: "Effectif déclaré corrigé par le conseiller : " +
-            data.declaredHeadcount + " → " + corrections.declaredHeadcount, stepId: "dataQuality"]
-   }}
-   def codes = reasons.collect {{ it.code }}
-   def level = (reasons.size() >= 2 || codes.contains("COLLECTIVE_PROCEDURE") || codes.contains("UNKNOWN_CUSTOMER")) ?
-         "REINFORCED" : "STANDARD"
-
-   def dataReview = st.review == null ? null : [confirmed: st.review.confirmed, corrections: corrections,
-         comment: st.review.comment, reviewedAt: iso(reviewAt)]
-   def advisorDecision = st.decision == null ? null : [finalDecision: st.decision.finalDecision,
-         surchargePercent: num(st.decision.surchargePercent), followsRecommendation: st.decision.followsRecommendation,
-         comment: st.decision.comment, acknowledgedReasons: st.decision.acknowledgedReasons, decidedAt: iso(decidedAt)]
-
-   def steps = [:]
-   META.each {{ m ->
-      def t = tl[m.id]
-      def kind = (m.id == "synthesis" && (!data.known || data.collective)) ? "RULE" : m.kind
-      def s = [label: m.label, phase: m.phase, mode: m.mode, kind: kind, status: "PENDING", dependsOn: m.dependsOn]
-      if (t.type == "skip") {{
-         if (now >= (t.at as long)) {{
-            s.status = "SKIPPED"; s.summary = skipReason[m.id]
-         }}
-      }} else if (t.type == "human") {{
-         long hs = t.start as long
-         if (now >= hs && t.doneAt != null) {{
-            s.status = "DONE"; s.startedAt = iso(hs); s.endedAt = iso(t.doneAt as long)
-            if (m.id == "dataReview") {{
-               s.summary = "Données validées par le conseiller" + (corrections.declaredHeadcount != null ?
-                     " (effectif déclaré corrigé : " + data.declaredHeadcount + " → " + corrections.declaredHeadcount + ")" : "") + "."
-               s.result = dataReview
-            }} else {{
-               def sp = num(st.decision.surchargePercent)
-               s.summary = "Décision du conseiller : " + DECISION_FR[st.decision.finalDecision] +
-                     (sp != null && sp.signum() > 0 ? " de " + sp.stripTrailingZeros().toPlainString() + " %" : "") +
-                     (st.decision.followsRecommendation ? " (suggestion suivie)." : " (suggestion écartée).")
-               s.result = advisorDecision
-            }}
-         }} else if (now >= hs) {{
-            s.status = "WAITING"; s.startedAt = iso(hs)
-            if (m.id == "dataReview") {{
-               s.summary = "En attente du conseiller : validation des données collectées."
-            }} else if (level == "REINFORCED") {{
-               s.summary = "En attente du conseiller : décision renforcée, risque trop important pour " +
-                     reasons.size() + " raison" + (reasons.size() > 1 ? "s" : "") + "."
-            }} else {{
-               s.summary = "En attente du conseiller : décision finale."
-            }}
-         }}
-      }} else if (t.type == "run" && now >= (t.want as long)) {{
-         if (now < (t.start as long)) {{
-            s.status = "QUEUED"; s.summary = "Prête, en attente d'un créneau LLM."
-         }} else if (now < (t.end as long)) {{
-            s.status = "RUNNING"; s.startedAt = iso(t.start as long)
-         }} else {{
-            def done = data.steps[m.id]
-            s.status = "DONE"; s.startedAt = iso(t.start as long); s.endedAt = iso(t.end as long)
-            s.summary = done.summary; s.result = done.result
-            s.calls = done.calls
-         }}
-      }}
-      if (s.calls == null) s.calls = []
-      steps[m.id] = s
-   }}
-
-   def adv = steps.advisorDecision.status
-   def pending = adv == "WAITING" ? "DECISION" : (steps.dataReview.status == "WAITING" ? "DATA_REVIEW" : null)
-   def status = adv == "DONE" ? "DECIDED" : (pending != null && !advancing ? "WAITING_ADVISOR" : "IN_PROGRESS")
-   def c = [caseId: "case-" + st.siren, siren: st.siren, product: "MULTIRISQUE_PRO"]
-   if (data.name) c.companyName = data.name
-   c.createdAt = iso(t0)
-   c.status = status
-   c.pendingAction = pending
-   c.stepOrder = META.collect {{ it.id }}
-   c.steps = steps
-   if (adv == "WAITING" || adv == "DONE") c.recommendation = data.recommendation
-   if (dataReview != null) c.dataReview = dataReview
-   if (adv == "WAITING" || adv == "DONE") c.escalation = [level: level, reasons: reasons]
-   if (advisorDecision != null) c.advisorDecision = advisorDecision
-   return c
-}}
-def respond = {{ st ->
-   requestContext.caseJson = json.toJson(buildCase(st))
-   return "case"
-}}
-"""
+    delay = lambda x, spread: f'{x["delay"]}, {spread}'
+    tokens = {
+        "META": js_literal(meta), "DECISION_FR": js_literal(DECISION_FR),
+        "DATA": js_literal({s: script_data(s) for s in COMPANIES}),
+        "UNKNOWN": js_literal(script_data(UNKNOWN_SIREN)), "UNKNOWN_SIREN": UNKNOWN_SIREN,
+        "TTL": str(STATE_TTL_SECONDS),
+        "SERVICE": delay(SERVICE_DELAY, SERVICE_SPREAD), "BODACC": delay(BODACC_DELAY, BODACC_SPREAD),
+        "FINANCIALS": delay(FINANCIALS_DELAY, FINANCIALS_SPREAD), "LLM": delay(LLM_DELAY, LLM_SPREAD),
+        "CLIMATE_DURATION": CLIMATE_DURATION_JS, "FINANCIAL_HEALTH_DURATION": FINANCIAL_HEALTH_DURATION_JS,
+        "JITTER_MIN": str(JITTER_MIN), "JITTER_SPAN": str(JITTER_MAX - JITTER_MIN + 1), "LLM_SLOTS": str(LLM_SLOTS),
+    }
+    text = JS_PRELUDE
+    for k, v in tokens.items():
+        text = text.replace(f"%%{k}%%", v)
+    assert "%%" not in text, "every token of the JS prelude must be replaced"
+    return text
 
 
-GROOVY_CREATE = """
-def body = slurper.parseText(mockRequest.getRequestContent() ?: "{}")
-def siren = body?.siren?.toString()
-if (siren == null || !(siren ==~ /[0-9]{9}/)) {
-   return "invalid-siren"
+JS_CREATE = """
+const body = requestBody();
+const siren = body.siren === undefined || body.siren === null ? null : String(body.siren);
+if (siren === null || !/^[0-9]{9}$/.test(siren)) {
+  return "invalid-siren";
 }
 // A new case always starts over, with new random durations.
-saveState(newState(siren))
-requestContext.caseId = "case-" + siren
-return "created"
+saveState(newState(siren));
+requestContext.set("caseId", "case-" + siren);
+return "created";
 """
 
-GROOVY_GET = """
-def st = loadState(mockRequest.getURIParameters().get("caseId"))
-if (st == null) {
-   return "not-found"
+JS_GET = """
+const st = loadState(mockRequest.getURIParameter("caseId"));
+if (st === null) {
+  return "not-found";
 }
-return respond(st)
+return respond(st);
 """
 
-GROOVY_DATA_REVIEW = """
-def st = loadState(mockRequest.getURIParameters().get("caseId"))
-if (st == null) {
-   return "not-found"
+JS_DATA_REVIEW = """
+const st = loadState(mockRequest.getURIParameter("caseId"));
+if (st === null) {
+  return "not-found";
 }
-if (buildCase(st).pendingAction != "DATA_REVIEW") {
-   return "not-expected"
+if (buildCase(st).pendingAction !== "DATA_REVIEW") {
+  return "not-expected";
 }
-def body = slurper.parseText(mockRequest.getRequestContent() ?: "{}")
-def corrections = [:]
-if (body?.corrections?.declaredHeadcount != null) {
-   corrections.declaredHeadcount = body.corrections.declaredHeadcount as int
+const body = requestBody();
+const corrections = {};
+if (body.corrections && body.corrections.declaredHeadcount != null) {
+  corrections.declaredHeadcount = Math.trunc(Number(body.corrections.declaredHeadcount));
 }
-st.review = [at: now, confirmed: body?.confirmed != false, corrections: corrections, comment: (body?.comment ?: "").toString()]
-saveState(st)
-return respond(st)
+st.review = {at: now, confirmed: body.confirmed !== false, corrections: corrections, comment: String(body.comment || "")};
+saveState(st);
+return respond(st);
 """
 
-GROOVY_DECISION = """
-def st = loadState(mockRequest.getURIParameters().get("caseId"))
-if (st == null) {
-   return "not-found"
+JS_DECISION = """
+const st = loadState(mockRequest.getURIParameter("caseId"));
+if (st === null) {
+  return "not-found";
 }
-def current = buildCase(st)
-if (current.pendingAction != "DECISION") {
-   return "not-expected"
+const current = buildCase(st);
+if (current.pendingAction !== "DECISION") {
+  return "not-expected";
 }
-def body = slurper.parseText(mockRequest.getRequestContent() ?: "{}")
-def finalDecision = body?.finalDecision?.toString()
-if (!["ACCEPT", "ACCEPT_WITH_SURCHARGE", "REVIEW", "REFUSE", "NOT_ELIGIBLE"].contains(finalDecision)) {
-   return "invalid-decision"
+const body = requestBody();
+const finalDecision = body.finalDecision === undefined || body.finalDecision === null ? null : String(body.finalDecision);
+if (!["ACCEPT", "ACCEPT_WITH_SURCHARGE", "REVIEW", "REFUSE", "NOT_ELIGIBLE"].includes(finalDecision)) {
+  return "invalid-decision";
 }
-def reco = current.recommendation
-def suggested = num(reco.surchargePercent)
-def surcharge = body?.surchargePercent != null ? num(body.surchargePercent) :
-      (finalDecision == reco.decision ? suggested : BigDecimal.ZERO)
-def follows = finalDecision == reco.decision && surcharge.compareTo(suggested) == 0
-def comment = (body?.comment ?: "").toString().trim()
-def acknowledged = (body?.acknowledgedReasons ?: []).collect { it.toString() }
-if (current.escalation.level == "REINFORCED") {
-   if (!acknowledged.containsAll(current.escalation.reasons.collect { it.code })) {
-      return "reasons-not-acknowledged"
-   }
-   if (!comment) {
-      return "comment-required"
-   }
+const reco = current.recommendation;
+const suggested = num(reco.surchargePercent);
+const surcharge = body.surchargePercent != null ? num(body.surchargePercent) :
+  (finalDecision === reco.decision ? suggested : 0);
+const follows = finalDecision === reco.decision && surcharge === suggested;
+const comment = String(body.comment || "").trim();
+const acknowledged = (body.acknowledgedReasons || []).map(String);
+if (current.escalation.level === "REINFORCED") {
+  if (!current.escalation.reasons.every(r => acknowledged.includes(r.code))) {
+    return "reasons-not-acknowledged";
+  }
+  if (!comment) {
+    return "comment-required";
+  }
 }
 if (!follows && !comment) {
-   return "comment-required"
+  return "comment-required";
 }
-st.decision = [at: now, finalDecision: finalDecision, surchargePercent: surcharge, followsRecommendation: follows,
-      comment: comment, acknowledgedReasons: acknowledged]
-saveState(st)
-return respond(st)
+st.decision = {at: now, finalDecision: finalDecision, surchargePercent: surcharge, followsRecommendation: follows,
+  comment: comment, acknowledgedReasons: acknowledged};
+saveState(st);
+return respond(st);
 """
 
 
 def underwriting_cases():
-    prelude = groovy_prelude()
+    prelude = js_prelude()
     live = {"case": "{{ caseJson }}"}
     errors = {
         "not-found": {"code": "CASE_NOT_FOUND", "message": "Aucun dossier pour cet identifiant."},
@@ -1167,70 +1282,60 @@ def underwriting_cases():
     reason_code = {"type": "string", "enum": REASON_ORDER}
     ref = lambda n: {"$ref": "#/components/schemas/" + n}
     nullable = lambda s: {**s, "nullable": True}
-    op = lambda script: {"dispatcher": "SCRIPT", "dispatcherRules": prelude + script}
+    op = lambda script: {"dispatcher": "JS", "dispatcherRules": prelude + script}
     return openapi(
         "Underwriting cases",
-        "L'orchestrateur de souscription Multirisque Pro. Il ouvre un dossier pour un SIREN, collecte les données "
-        "(services), attend que le conseiller les valide, fait travailler les analyses LLM (l'agent climat appelle "
-        "l'outil Géorisques exposé en MCP par reShapr), propose une suggestion consultative et attend la décision du "
-        "conseiller.\n\nLe mock Microcks se comporte comme "
-        "l'orchestrateur au temps près : le POST tire au hasard la durée de chaque étape (services 1,2 à 10,8 s, "
-        "BODACC 10 à 30 s, comptes annuels 30 à 60 s, LLM 6 à 18 s, agent financial-health 40 à 60 s) et son décalage de démarrage (0,3 à 5 s), et les garde "
-        "dans le store ; chaque GET calcule le dossier d'après le temps écoulé, en suivant dependsOn et 2 créneaux "
-        "LLM (une étape LLM prête au-delà passe QUEUED). Seule l'analyse financialHealth attend la validation des "
-        "données ; pendingAction signale l'action du conseiller dès qu'elle est possible, et status ne passe à "
-        "WAITING_ADVISOR que quand plus rien n'avance sans lui. Les réponses sont rendues par templating "
-        "(variable caseJson posée par le script).",
+        "The Multirisk Pro underwriting orchestrator. It opens a case for a SIREN, collects the data, waits for the advisor to validate it, runs the LLM analyses (some agents use MCP tools), produces an advisory suggestion and waits for the advisor's decision. pendingAction tells which advisor action is expected as soon as it is possible; status becomes WAITING_ADVISOR only when nothing moves on without the advisor.",
         {"/underwriting-cases": {"post": {
             "operationId": "createUnderwritingCase",
-            "summary": "Ouvrir un dossier de souscription",
-            "x-microcks-operation": op(GROOVY_CREATE),
+            "summary": "Open an underwriting case",
+            "x-microcks-operation": op(JS_CREATE),
             "requestBody": {"required": True, "content": json_content("CaseRequest", {
                 "created": {"siren": "100000001", "product": "MULTIRISQUE_PRO"},
                 "invalid-siren": {"siren": "1234", "product": "MULTIRISQUE_PRO"}})},
             "responses": {
-                "202": {"description": "Le dossier est ouvert et la collecte a commencé",
+                "202": {"description": "The case is open and the data collection has started",
                         "content": json_content("CaseCreated", {"created": {"caseId": "{{ caseId }}",
                                                                             "status": "IN_PROGRESS"}})},
-                "400": {"description": "SIREN invalide", "content": json_content("Error", pick("invalid-siren"))}}}},
+                "400": {"description": "Invalid SIREN", "content": json_content("Error", pick("invalid-siren"))}}}},
          "/underwriting-cases/{caseId}": {"get": {
              "operationId": "getUnderwritingCase",
-             "summary": "Lire un dossier de souscription",
+             "summary": "Read an underwriting case",
              "parameters": [param("caseId", "path", {"case": "case-100000001", "not-found": "case-000000000"})],
-             "x-microcks-operation": op(GROOVY_GET),
-             "responses": {"200": {"description": "Le dossier", "content": json_content("Case", live)},
-                           "404": {"description": "Dossier inconnu",
+             "x-microcks-operation": op(JS_GET),
+             "responses": {"200": {"description": "The case", "content": json_content("Case", live)},
+                           "404": {"description": "Unknown case",
                                    "content": json_content("Error", pick("not-found"))}}}},
          "/underwriting-cases/{caseId}/data-review": {"post": {
              "operationId": "reviewCaseData",
-             "summary": "Valider (ou corriger) les données collectées",
+             "summary": "Validate (or correct) the collected data",
              "parameters": case_param(),
-             "x-microcks-operation": op(GROOVY_DATA_REVIEW),
+             "x-microcks-operation": op(JS_DATA_REVIEW),
              "requestBody": {"required": True, "content": json_content("DataReviewRequest", {
                  "case": {"confirmed": True, "corrections": {"declaredHeadcount": 8},
                           "comment": "Effectif vérifié sur la DSN : 8 salariés."},
                  "not-found": {"confirmed": True, "corrections": {}, "comment": ""},
                  "not-expected": {"confirmed": True, "corrections": {}, "comment": ""}})},
-             "responses": {"200": {"description": "Le dossier, qui reprend ses analyses",
+             "responses": {"200": {"description": "The case, which resumes its analyses",
                                    "content": json_content("Case", live)},
-                           "404": {"description": "Dossier inconnu",
+                           "404": {"description": "Unknown case",
                                    "content": json_content("Error", pick("not-found"))},
-                           "409": {"description": "Le dossier n'attend pas la validation des données",
+                           "409": {"description": "The case is not waiting for the data review",
                                    "content": json_content("Error", pick("not-expected"))}}}},
          "/underwriting-cases/{caseId}/advisor-decision": {"post": {
              "operationId": "recordAdvisorDecision",
-             "summary": "Enregistrer la décision du conseiller",
-             "description": "followsRecommendation est calculé par le serveur : la décision et la surprime sont celles "
-                            "de la suggestion. surchargePercent absent vaut la surprime suggérée si la décision est "
-                            "celle de la suggestion, 0 sinon. Le commentaire est obligatoire pour s'écarter de la "
-                            "suggestion ; en escalade REINFORCED, chaque raison doit être reconnue "
-                            "(acknowledgedReasons) et le commentaire est obligatoire.",
+             "summary": "Record the advisor's decision",
+             "description": "followsRecommendation is computed by the server: the decision and the surcharge are those "
+                            "of the suggestion. A missing surchargePercent is the suggested surcharge if the decision "
+                            "is the suggested one, 0 otherwise. A comment is required to depart from the suggestion; "
+                            "with a REINFORCED escalation, every reason must be acknowledged (acknowledgedReasons) and "
+                            "the comment is required.",
              "parameters": [param("caseId", "path", {"case": "case-100000001", "not-found": "case-000000000",
                                                      "not-expected": "case-100000001",
                                                      "comment-required": "case-100000001",
                                                      "reasons-not-acknowledged": "case-100000004",
                                                      "invalid-decision": "case-100000001"})],
-             "x-microcks-operation": op(GROOVY_DECISION),
+             "x-microcks-operation": op(JS_DECISION),
              "requestBody": {"required": True, "content": json_content("AdvisorDecisionRequest", {
                  "case": {"finalDecision": "ACCEPT", "surchargePercent": 0,
                           "comment": COMPANIES["100000001"]["advisor"]["comment"], "acknowledgedReasons": []},
@@ -1240,13 +1345,13 @@ def underwriting_cases():
                  "reasons-not-acknowledged": {"finalDecision": "REFUSE", "comment": "Contentieux en cours.",
                                               "acknowledgedReasons": ["OPEN_LITIGATION"]},
                  "invalid-decision": {"finalDecision": "MAYBE", "comment": ""}})},
-             "responses": {"200": {"description": "Le dossier décidé", "content": json_content("Case", live)},
-                           "400": {"description": "Décision incomplète",
+             "responses": {"200": {"description": "The decided case", "content": json_content("Case", live)},
+                           "400": {"description": "Incomplete decision",
                                    "content": json_content("Error", pick("comment-required", "reasons-not-acknowledged",
                                                                          "invalid-decision"))},
-                           "404": {"description": "Dossier inconnu",
+                           "404": {"description": "Unknown case",
                                    "content": json_content("Error", pick("not-found"))},
-                           "409": {"description": "Le dossier n'attend pas la décision",
+                           "409": {"description": "The case is not waiting for the decision",
                                    "content": json_content("Error", pick("not-expected"))}}}}},
         {"CaseRequest": obj({"siren": {"type": "string", "pattern": "^[0-9]{9}$"},
                              "product": {"type": "string", "enum": ["MULTIRISQUE_PRO"]}}),
@@ -1402,7 +1507,8 @@ def data_review_checks(collective=False):
 
 def llm_suggestion_checks():
     return ([body_is("/status", "WAITING_ADVISOR")] + [body_is(f"/steps/{s}/status", "DONE") for s in ANALYSES + ["synthesis"]]
-            + [body_is(f"/steps/climateRisk/calls/{i}/via", via) for i, via in enumerate(["MCP", "LLM", "MCP", "LLM"])]
+            + [body_is(f"/steps/{step}/calls/{i}/via", via)
+               for step in TOOL_LOOPS for i, via in enumerate(loop_vias(step))]
             + [body_is("/steps/synthesis/kind", "LLM"), body_is("/recommendation/source", "LLM"),
                body_is("/steps/advisorDecision/status", "WAITING")])
 
@@ -1622,6 +1728,55 @@ def consumer_workflows():
     ]
 
 
+# The tools of the climate agent, as reShapr calls them: in a session, Microcks sees them because reShapr forwards the
+# x-microcks-session header to the mocks. (Microcks' native MCP endpoint does not record its calls in a session.)
+TOOLS_SOURCES = CONSUMER_SOURCES + [("georisques", "georisques.openapi.yaml", "Georisques")]
+
+
+def tools_arazzo():
+    climate_tools = [
+        # The data flow through the model and reShapr: the INSEE code the orchestrator got from Sirene reaches
+        # Géorisques, in the tool call the model asked for.
+        {"stepId": "climateNaturalRisks", "operationId": "$sourceDescriptions.georisques.getRapportRisque",
+         "description": "Outil get_resultats_rapport_risque de l'agent climat, appelé par reShapr.",
+         "dependsOn": ["companyIdentity", "legalEvents", "financials"],
+         "parameters": [{"name": "code_insee", "in": "query", "value": "$steps.companyIdentity.outputs.inseeCityCode"}],
+         "successCriteria": [status_is(200)]},
+        {"stepId": "climateLegalEvents", "operationId": "$sourceDescriptions.bodacc.searchAnnonces",
+         "description": "Outil get_annonces de l'agent climat, appelé par reShapr : un second appel au BODACC, après "
+                        "celui de la collecte.",
+         "dependsOn": ["companyIdentity", "legalEvents", "financials"],
+         "parameters": [{"name": "siren", "in": "query", "value": "$inputs.siren"}],
+         "successCriteria": [status_is(200)]}]
+    return {
+        "arazzo": "1.1.0",
+        "info": {"title": "Commercial underwriting agent tools", "version": "1.0.0",
+                 "summary": "Les outils MCP des agents, vus depuis les API que reShapr appelle.",
+                 "description": "L'agent climat reçoit de l'orchestrateur les outils Géorisques et BODACC exposés par "
+                                "reShapr. Le modèle (mock Microcks) demande les deux ; l'orchestrateur les exécute via "
+                                "reShapr, qui appelle les mocks Microcks en transmettant x-microcks-session. La session "
+                                "vérifie que ces appels arrivent, après la collecte, avec les bonnes données : le code "
+                                "INSEE de Sirene pour Géorisques, le SIREN du dossier pour le BODACC.\n"},
+        "sourceDescriptions": source_descriptions(TOOLS_SOURCES),
+        "workflows": [
+            {"workflowId": "climateToolsGoThroughReshapr",
+             "summary": "La collecte, puis les deux outils de l'agent climat, appelés par reShapr pour le modèle.",
+             "inputs": inputs(SIREN_INPUT),
+             "steps": collection_steps() + climate_tools,
+             "outputs": {"customerId": "$steps.checkAccount.outputs.customerId",
+                         "inseeCityCode": "$steps.companyIdentity.outputs.inseeCityCode"}}]}
+
+
+def tools_arazzo_sources():
+    s2 = "100000002"
+    return {"apiVersion": "mocks.microcks.io/v1alpha1", "kind": "ArazzoSources",
+            "metadata": {"name": "Commercial underwriting agent tools", "version": "1.0.0"},
+            "sources": overlay_sources(TOOLS_SOURCES),
+            "examples": {"climateToolsGoThroughReshapr": {
+                "siren-" + s2: {"inputs": {"siren": s2},
+                                "outputs": {"customerId": customer_id(s2), "inseeCityCode": insee(s2)}}}}}
+
+
 def guards_arazzo():
     return {
         "arazzo": "1.1.0",
@@ -1701,19 +1856,73 @@ def arazzo_sources():
                     "siren-" + s9: {"inputs": {"siren": s9}, "steps": {"checkAccount": {"status": 404}}}}}}
 
 
+# --------------------------------------------------------------------------------------------------------------
+# One API, three files: the API definition, and what Microcks needs to mock it
+# --------------------------------------------------------------------------------------------------------------
+
+def split_for_microcks(doc):
+    """Splits a generated OpenAPI document into a pure OpenAPI definition (no x-microcks-*, no examples), an
+    APIMetadata (dispatcher, dispatcher rules, latency per operation) and an APIExamples (named request/response
+    pairs). Microcks imports the OpenAPI as main artifact, then the two as secondary artifacts."""
+    api = json.loads(json.dumps(doc))
+    title, version = api["info"]["title"], api["info"]["version"]
+    metadata_ops, examples_ops = {}, {}
+    for path, methods in api["paths"].items():
+        for method, op in methods.items():
+            name = f"{method.upper()} {path}"
+            if "x-microcks-operation" in op:
+                metadata_ops[name] = op.pop("x-microcks-operation")
+            examples = {}
+
+            def example(n):
+                return examples.setdefault(n, {"request": {}, "response": {}})
+            for prm in op.get("parameters", []):
+                for n, v in prm.pop("examples", {}).items():
+                    example(n)["request"].setdefault("parameters", {})[prm["name"]] = v["value"]
+            for media in op.get("requestBody", {}).get("content", {}).values():
+                for n, v in media.pop("examples", {}).items():
+                    example(n)["request"]["body"] = v["value"]
+            for status, response in op.get("responses", {}).items():
+                for media_type, media in response.get("content", {}).items():
+                    for n, v in media.pop("examples", {}).items():
+                        example(n)["response"] = {"status": str(status), "mediaType": media_type, "body": v["value"]}
+            orphans = [n for n, e in examples.items() if not e["response"]]
+            assert not orphans, f"{name}: examples without a response: {orphans}"
+            if examples:
+                examples_ops[name] = examples
+    meta = {"name": title, "version": version}
+    return (api,
+            {"apiVersion": "mocks.microcks.io/v1alpha1", "kind": "APIMetadata", "metadata": meta,
+             "operations": metadata_ops},
+            {"apiVersion": "mocks.microcks.io/v1alpha1", "kind": "APIExamples", "metadata": meta,
+             "operations": examples_ops})
+
+
+def write_api(stem, doc):
+    api, metadata, examples = split_for_microcks(doc)
+    write(f"{stem}.openapi.yaml", api, HEADER)
+    notes = MOCK_NOTES[api["info"]["title"]]
+    write(f"{stem}.microcks-metadata.yaml", metadata,
+          HEADER + "\n" + "\n".join(textwrap.wrap("Microcks only: how the mock dispatches and how long it "
+                                                    "takes. " + notes, 114)))
+    write(f"{stem}.microcks-examples.yaml", examples, HEADER + "\nMicrocks only: the named examples of the mock.")
+
+
 HEADER = "Generated by scripts/generate-contracts.py from the table of the five demo companies. Do not edit by hand."
 
 if __name__ == "__main__":
     CONTRACTS.mkdir(exist_ok=True)
-    write("customer-accounts.openapi.yaml", customer_accounts(), HEADER)
-    write("sirene.openapi.yaml", sirene(), HEADER)
-    write("bodacc.openapi.yaml", bodacc(), HEADER)
-    write("georisques.openapi.yaml", georisques(), HEADER)
-    write("company-financials.openapi.yaml", company_financials(), HEADER)
-    write("claims-and-contracts.openapi.yaml", claims_and_contracts(), HEADER)
-    write("llm-gateway.openapi.yaml", llm_gateway(), HEADER)
-    write("underwriting-cases.openapi.yaml", underwriting_cases(), HEADER)
+    write_api("customer-accounts", customer_accounts())
+    write_api("sirene", sirene())
+    write_api("bodacc", bodacc())
+    write_api("georisques", georisques())
+    write_api("company-financials", company_financials())
+    write_api("claims-and-contracts", claims_and_contracts())
+    write_api("llm-gateway", llm_gateway())
+    write_api("underwriting-cases", underwriting_cases())
     write("underwriting.arazzo.yaml", arazzo(), HEADER)
     write("underwriting.arazzo-sources.yaml", arazzo_sources(), HEADER)
     write("underwriting-guards.arazzo.yaml", guards_arazzo(), HEADER)
     write("underwriting-guards.arazzo-sources.yaml", guards_arazzo_sources(), HEADER)
+    write("underwriting-tools.arazzo.yaml", tools_arazzo(), HEADER)
+    write("underwriting-tools.arazzo-sources.yaml", tools_arazzo_sources(), HEADER)

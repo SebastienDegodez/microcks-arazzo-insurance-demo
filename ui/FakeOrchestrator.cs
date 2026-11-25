@@ -18,14 +18,15 @@ public sealed class FakeOrchestrator
         ("openItems", "Sinistres et contrats", 2, "PARALLEL", "SERVICE", ["checkAccount"]),
         ("dataQuality", "Contrôle de la collecte", 2, "CHAIN", "LLM", ["checkAccount", "companyIdentity", "financials"]),
         ("dataReview", "Validation des données", 3, "CHAIN", "HUMAN", ["companyIdentity", "legalEvents", "financials", "openItems", "dataQuality"]),
-        ("climateRisk", "Analyse risque climatique (outil MCP)", 4, "PARALLEL", "LLM", ["companyIdentity", "dataQuality"]),
-        ("financialHealth", "Analyse santé financière", 4, "PARALLEL", "LLM", ["financials", "legalEvents", "dataReview"]),
+        ("climateRisk", "Analyse du risque climatique (outils Géorisques et BODACC via reShapr)", 4, "PARALLEL", "LLM", ["companyIdentity", "dataQuality"]),
+        ("financialHealth", "Analyse de la santé financière (outil comptes annuels via le MCP de Microcks)", 4, "PARALLEL", "LLM", ["financials", "legalEvents", "dataReview"]),
         ("openItemsReview", "Analyse sinistres et contrats", 4, "PARALLEL", "LLM", ["openItems", "dataQuality"]),
         ("synthesis", "Synthèse des analyses", 5, "CHAIN", "LLM", ["climateRisk", "financialHealth", "openItemsReview", "dataReview"]),
         ("advisorDecision", "Décision du conseiller", 6, "CHAIN", "HUMAN", ["synthesis"]),
     ];
     private static readonly string[] LlmPriority = ["dataQuality", "climateRisk", "financialHealth", "openItemsReview", "synthesis"];
-    // 12 steps (v3): no geoRisks, the climate agent fetches the natural risks through reShapr (MCP).
+    // 12 steps (v3): no geoRisks. Two tool-using agents: the climate agent gets Géorisques and BODACC tools from reShapr
+    // (MCP), the financial agent gets the annual accounts tool from the native MCP endpoint of Microcks.
     private const int LlmSlots = 2;
 
     private readonly JsonObject _data;

@@ -99,6 +99,6 @@ export function renderMap({ identity, risks, name, compact = false }) {
   const legend = `<ul class="map-legend">${zones.map(z => `<li class="${z.level === 'NONE' ? 'off' : ''}"><i class="sw ${z.cls}"></i>${esc(z.label)} : <strong>${esc(LEVELS[z.level] || z.level)}</strong></li>`).join('')}
     ${rn.seisme?.zone ? `<li><i class="sw z-seism"></i>Sismicité : <strong>zone ${esc(rn.seisme.zone)}</strong></li>` : ''}
     <li><i class="sw z-pin"></i>${esc(name || 'Entreprise')}</li></ul>`;
-  const note = risks ? '' : '<p class="map-note">Zones de risque : en attente de l\'agent climat (outil MCP → Géorisques).</p>';
+  const note = risks ? '' : '<p class="map-note">Zones de risque : en attente de l\'agent climat (outils MCP via reShapr → Géorisques).</p>';
   return `<figure class="map ${compact ? 'compact' : ''}">${svg}<figcaption>${compact ? '' : legend}${note}<span class="map-disclaimer">Silhouette schématique de ${esc(c.city || 'la commune')}, sans données cartographiques réelles.</span></figcaption></figure>`;
 }

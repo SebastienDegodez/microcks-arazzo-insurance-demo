@@ -42,4 +42,4 @@ wait_for http://localhost:5190/ "IHM sur :5190" 90
 echo
 echo "IHM         http://localhost:5190"
 echo "Microcks    http://localhost:8080/#/workflows   (document « Commercial underwriting »)"
-echo "reShapr     http://localhost:5555   (MCP : http://localhost:7778/mcp/reshapr/georisques-1-0-0-default)"
+echo "reShapr     http://localhost:5555   (MCP : http://localhost:7778/mcp/reshapr/{georisques,bodacc}-1-0-0-default)"

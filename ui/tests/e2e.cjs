@@ -84,7 +84,7 @@ async function scenario(browser, backend, siren) {
     check(`${tag} 12 étapes (v3, sans geoRisks)`, await page.evaluate(() => Object.keys(window.__csp.state.c.steps).length === 12 && !window.__csp.state.c.steps.geoRisks));
     if (backend === 'microcks') {
       check(`${tag} Comprendre : Microcks joue l'orchestrateur ; reShapr et le LLM au repos, pas grisés`, await page.isVisible('[data-node="uw"]') && !/idle/.test(await page.getAttribute('[data-node="llm"]', 'class')) && !/idle/.test(await page.getAttribute('[data-node="reshapr"]', 'class')));
-      check(`${tag} Comprendre : lien pointillé « outil du modèle », référencé par l'orchestrateur réel`, (await page.$('.fd-edge.tool')) !== null && (await page.textContent('.fd-svg')).includes('outil du modèle') && (await page.textContent('.fd-svg')).includes('référencé par l\'orchestrateur réel'));
+      check(`${tag} Comprendre : pas de lien LLM → reShapr (le modèle n'appelle aucun outil)`, (await page.$('.fd-edge.tool')) === null && !(await page.textContent('.fd-svg')).includes('outil du modèle'));
     }
     check(`${tag} Comprendre : nœud « reShapr (MCP) » hors du cadre`, (await page.textContent('[data-node="reshapr"]')).includes('reShapr (MCP)') && !(await page.$('[data-node="mcp:microcks"]')));
 
@@ -160,9 +160,12 @@ async function scenario(browser, backend, siren) {
       check(`${tag} pendingAction pendant que d'autres étapes tournent`, w.pendingWhileRunning);
       if (backend !== 'microcks') {
         const vias = (fin.steps.climateRisk?.calls || []).map(x => x.via).join(',');
-        check(`${tag} climateRisk : MCP, LLM, MCP, LLM`, /MCP.*LLM.*MCP.*LLM/.test(vias), vias);
+        check(`${tag} climateRisk : MCP, MCP, LLM, MCP, MCP, LLM`, vias === 'MCP,MCP,LLM,MCP,MCP,LLM', vias);
+        const fhVias = (fin.steps.financialHealth?.calls || []).map(x => x.via).join(',');
+        check(`${tag} financialHealth : MCP, LLM, MCP, LLM (MCP natif de Microcks)`, fhVias === 'MCP,LLM,MCP,LLM' && fin.steps.financialHealth.calls.filter(x => x.via === 'MCP').every(x => /\/mcp\/Company(%20| )financials\//.test(x.url)), fhVias);
         check(`${tag} Comprendre : paquets requête, OK, LLM, MCP, conseiller`, ['req', 'ok', 'llm', 'mcp', 'post'].every(t => w.tones.includes(t)), w.tones.join(','));
-        check(`${tag} Comprendre : le modèle demande l'outil (LLM → reShapr → Géorisques)`, w.labels.includes('get_resultats_rapport_risque') && w.labels.includes('GET /resultats_rapport_risque'), w.labels.filter(l => /outil|resultats|tools/.test(l)).join(' | '));
+        check(`${tag} Comprendre : l'orchestrateur exécute les outils (→ reShapr → Géorisques et BODACC)`, ['get_resultats_rapport_risque', 'GET /resultats_rapport_risque', 'get_annonces', 'GET /annonces'].every(l => w.labels.includes(l)), w.labels.filter(l => /outil|resultats|annonces|tools/.test(l)).join(' | '));
+        check(`${tag} Comprendre : outil du MCP natif de Microcks (→ Bilans)`, w.labels.includes('MCP tools/list') && w.labels.includes('get_companies_siren_financials'), w.labels.filter(l => /tools|financials/.test(l)).join(' | '));
       }
     } else if (backend !== 'microcks') {
       check(`${tag} aucun appel LLM`, llmCalls === 0, String(llmCalls));
@@ -179,7 +182,7 @@ async function scenario(browser, backend, siren) {
     check(`${tag} Comprendre : attente du conseiller côté IHM`, w.waiting);
     const log = await page.$$eval('.fd-log li', l => l.map(x => x.textContent));
     if (exp.caption) check(`${tag} Comprendre : légende « ${exp.caption} »`, log.some(l => l.includes(exp.caption)), log.slice(-4).join(' / '));
-    if (exp.flow === 'normal' && backend !== 'microcks') check(`${tag} Comprendre : légende « reShapr expose Géorisques en MCP »`, log.some(l => /reShapr expose Géorisques en MCP ; Microcks simule l.API derrière lui/.test(l)), log.join(' / ').slice(0, 200));
+    if (exp.flow === 'normal' && backend !== 'microcks') check(`${tag} Comprendre : légendes « reShapr expose Géorisques et BODACC » et « MCP natif de Microcks »`, log.some(l => /reShapr expose Géorisques et BODACC en MCP ; Microcks simule les API derrière lui/.test(l)) && log.some(l => /MCP natif de Microcks/.test(l)), log.join(' / ').slice(0, 200));
     if (backend === 'microcks') check(`${tag} Comprendre : légende du mode mock`, log.some(l => l.includes('Mode mock : Microcks joue l\'orchestrateur, aucun appel réel en aval')) || (await page.textContent('.fd-caption')).includes('Mode mock'));
     // Parcours: bars, milestones, dependencies; a bar opens its detail.
     await page.evaluate(() => window.__csp.selectTab('timeline'));

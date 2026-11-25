@@ -1,6 +1,9 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.DependencyInjection;
+using UnderwritingOrchestrator.Agents;
 using UnderwritingOrchestrator.Dependencies;
 
 namespace UnderwritingOrchestrator.WorkflowTests.Infrastructure;
@@ -22,6 +25,26 @@ public static class Sabotage
     /// <summary>For act 3d only: the CRM is slow today, so a call started before its answer wins the race.</summary>
     public static void SlowCrm(IServiceCollection services) =>
         services.AddHttpClient(nameof(CompanyDataApis)).AddHttpMessageHandler(() => new SlowCrmHandler());
+
+    /// <summary>The BODACC tool never reaches the model: the orchestrator hands the climate agent an incomplete toolset.</summary>
+    public static void ForgetBodaccTool(IServiceCollection services) =>
+        services.AddHttpClient(UnderwritingAgents.HttpClientName).AddHttpMessageHandler(() => new ForgetTool("get_annonces"));
+
+    private sealed class ForgetTool(string toolName) : DelegatingHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            if (request.Content is not null
+                && JsonNode.Parse(await request.Content.ReadAsStringAsync(ct)) is JsonObject { } body
+                && body["tools"] is JsonArray tools)
+            {
+                foreach (var tool in tools.Where(t => t?["function"]?["name"]?.GetValue<string>() == toolName).ToList())
+                    tools.Remove(tool);
+                request.Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json");
+            }
+            return await base.SendAsync(request, ct);
+        }
+    }
 
     private sealed class SirenInsteadOfCustomerId : DelegatingHandler
     {

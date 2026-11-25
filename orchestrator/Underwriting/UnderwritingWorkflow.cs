@@ -28,8 +28,8 @@ public sealed record CaseFacts(string Siren)
 /// The climate agent fetches the natural risks itself: the model calls the Géorisques tool, served by reShapr (MCP).
 /// </summary>
 public sealed class UnderwritingWorkflow(
-    CompanyDataApis services, ToolUsingAgent toolUsingAgent, IOptions<GeorisquesMcpOptions> georisquesMcp,
-    LlmGatewayClient llm, StepRunner steps, ILogger<UnderwritingWorkflow> log)
+    CompanyDataApis services, UnderwritingAgents agents, IOptions<McpServersOptions> mcp,
+    StepRunner steps, ILogger<UnderwritingWorkflow> log)
 {
     private const string NoLlmReason = "Non exécutée : procédure collective, aucun LLM appelé.";
     private readonly ConcurrentDictionary<string, Task<JsonNode?>> _steps = new();
@@ -92,12 +92,20 @@ public sealed class UnderwritingWorkflow(
         _steps[StepCatalog.DataReview] = AfterDependencies(StepCatalog.DataReview, () => WaitForDataReviewAsync(c, ct));
         Schedule(c, ClimateRisk, ct, async calls =>
         {
-            var run = await toolUsingAgent.RunAsync(AgentPrompts.ClimateRisk(Facts(c)), georisquesMcp.Value.Endpoint, c.Siren, calls, ct);
+            // Example 2: tools served by reShapr, which calls the Géorisques and BODACC APIs (Microcks mocks).
+            var run = await agents.AskWithToolsAsync(AgentPrompts.ClimateRisk(Facts(c)),
+                [mcp.Value.Georisques, mcp.Value.Bodacc], c.Siren, calls, ct);
             var result = (JsonObject)run.Output.DeepClone();
-            result["naturalRisks"] = run.ToolRuns.LastOrDefault()?.Output.DeepClone(); // the Géorisques report
+            result["naturalRisks"] = StepSummaries.NaturalRisksReport(run)?.DeepClone(); // the Géorisques report
             return new StepOutcome(StepSummaries.ClimateRisk(run), result);
         }, skipWhen: NoLlmForCollectiveProcedure);
-        Analyse(c, FinancialHealth, () => AgentPrompts.FinancialHealth(Facts(c)), StepSummaries.FinancialHealth, ct);
+        Schedule(c, FinancialHealth, ct, async calls =>
+        {
+            // Example 1, "pure Microcks": the tool is served by the native MCP endpoint of the Company financials mock.
+            var run = await agents.AskWithToolsAsync(AgentPrompts.FinancialHealth(Facts(c)),
+                [mcp.Value.CompanyFinancials], c.Siren, calls, ct);
+            return new StepOutcome(StepSummaries.FinancialHealth(run), run.Output);
+        }, skipWhen: NoLlmForCollectiveProcedure);
         Analyse(c, OpenItemsReview, () => AgentPrompts.OpenItemsReview(Facts(c)), StepSummaries.OpenItemsReview, ct);
 
         Recommendation? suggestion = null;
@@ -106,7 +114,7 @@ public sealed class UnderwritingWorkflow(
             if (UnderwritingRules.FindCollectiveProcedure(Result(LegalEvents)) is { } procedure)
                 suggestion = UnderwritingRules.RefuseForCollectiveProcedure(procedure); // a rule, no LLM
             else
-                suggestion = UnderwritingRules.FromSynthesis(await llm.AskAsync(AgentPrompts.Synthesis(Facts(c),
+                suggestion = UnderwritingRules.FromSynthesis(await agents.AskAsync(AgentPrompts.Synthesis(Facts(c),
                     Analyses.ToDictionary(id => id, id => Result(id) as JsonObject)), c.Siren, calls, ct));
             return new StepOutcome(StepSummaries.Suggestion(suggestion), JsonSerializer.SerializeToNode(suggestion, CaseJson.Options));
         }, beforeStart: () =>
@@ -138,7 +146,7 @@ public sealed class UnderwritingWorkflow(
         CancellationToken ct) =>
         Schedule(c, stepId, ct, async calls =>
         {
-            var answer = await llm.AskAsync(prompt(), c.Siren, calls, ct);
+            var answer = await agents.AskAsync(prompt(), c.Siren, calls, ct);
             return new StepOutcome(summarize(answer), answer);
         }, skipWhen: NoLlmForCollectiveProcedure);
 

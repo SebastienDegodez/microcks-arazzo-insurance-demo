@@ -2,20 +2,25 @@
 const fs = require('fs');
 const M = 'http://localhost:8080';
 const rest = (svc, path, status = 200) => ({ method: 'GET', url: `${M}/rest/${svc}/1.0.0${path}`, status, via: 'REST' });
-// v3: the MCP is reShapr; Microcks only simulates the Géorisques API behind it.
-const RESHAPR = 'http://localhost:7778/mcp/reshapr/georisques-1-0-0-default';
-// climateRisk's tool loop, in order: MCP tools/list, LLM (tool_calls), MCP tools/call, LLM (answer).
-const climateCalls = () => [
-  { method: 'POST', url: RESHAPR, status: 200, via: 'MCP' },
-  { method: 'POST', url: `${M}/rest/LLM+gateway/1.0.0/v1/chat/completions`, status: 200, via: 'LLM' },
-  { method: 'POST', url: RESHAPR, status: 200, via: 'MCP' },
-  { method: 'POST', url: `${M}/rest/LLM+gateway/1.0.0/v1/chat/completions`, status: 200, via: 'LLM' },
+// Two tool loops. climateRisk (example 2): reShapr, outside Microcks, exposes Géorisques and BODACC as MCP servers
+// and calls the Microcks mocks behind them. financialHealth (example 1): the native MCP endpoint of Microcks itself.
+const RESHAPR_GEORISQUES = 'http://localhost:7778/mcp/reshapr/georisques-1-0-0-default';
+const RESHAPR_BODACC = 'http://localhost:7778/mcp/reshapr/bodacc-1-0-0-default';
+const MICROCKS_FINANCIALS = `${M}/mcp/Company%20financials/1.0.0`;
+const LLM_URL = `${M}/rest/LLM+gateway/1.0.0/v1/chat/completions`;
+// A tool loop, in order: tools/list on each MCP server, LLM (tool_calls), tools/call on each server, LLM (answer).
+// The model never calls a tool: the orchestrator executes each tool call through MCP.
+const toolLoop = servers => [
+  ...servers.map(url => ({ method: 'POST', url, status: 200, via: 'MCP' })),
+  { method: 'POST', url: LLM_URL, status: 200, via: 'LLM' },
+  ...servers.map(url => ({ method: 'POST', url, status: 200, via: 'MCP' })),
+  { method: 'POST', url: LLM_URL, status: 200, via: 'LLM' },
 ];
-const mcp = (base = RESHAPR) => [
-  { method: 'POST', url: base, status: 200, via: 'MCP' },
-  { method: 'POST', url: base, status: 200, via: 'MCP' },
-];
-const llm = () => [{ method: 'POST', url: `${M}/rest/LLM+gateway/1.0.0/v1/chat/completions`, status: 200, via: 'LLM' }];
+const climateCalls = () => toolLoop([RESHAPR_GEORISQUES, RESHAPR_BODACC]);
+const healthCalls = () => toolLoop([MICROCKS_FINANCIALS]);
+const climateSummary = c => `${c.summary.replace(/\.$/, '')} (Géorisques et BODACC interrogés via reShapr).`;
+const healthSummary = h => `${h.summary.replace(/\.$/, '')} : comptes annuels lus par l'outil MCP de Microcks.`;
+const llm = () => [{ method: 'POST', url: LLM_URL, status: 200, via: 'LLM' }];
 
 const company = (siren, cid, name, naf, nafLabel, headRange, created, street, pc, city, insee, lat, lon) => ({
   siren, cid, name,
@@ -34,8 +39,8 @@ function eligible(c, o) {
       financials: { summary: o.fin.summary, result: { siren: s, ...o.fin.result }, calls: [rest('Company+financials', `/companies/${s}/financials`)] },
       openItems: { summary: o.items.summary, result: { customerId: c.cid, ...o.items.result }, calls: [rest('Claims+and+contracts', `/customers/${c.cid}/open-items`)] },
       dataQuality: { summary: o.dq.summary, result: o.dq.result, calls: llm() },
-      climateRisk: { summary: o.climate.summary, result: { ...o.climate.result, naturalRisks: o.geo.result }, calls: climateCalls() },
-      financialHealth: { summary: o.health.summary, result: o.health.result, calls: llm() },
+      climateRisk: { summary: climateSummary(o.climate), result: { ...o.climate.result, naturalRisks: o.geo.result }, calls: climateCalls() },
+      financialHealth: { summary: healthSummary(o.health), result: o.health.result, calls: healthCalls() },
       openItemsReview: { summary: o.review.summary, result: o.review.result, calls: llm() },
       synthesis: { summary: o.verdict.summary, result: o.reco, calls: llm() },
     },
@@ -66,7 +71,7 @@ out['100000001'] = eligible(c1, {
   legal: { summary: 'Aucune procédure collective : 1 annonce (immatriculation).', result: { total: 1, records: [{ type: 'Immatriculation', nature: 'Création', date: '2012-05-14', court: 'Greffe du tribunal de commerce de La Rochelle' }] } },
   fin: { summary: 'CA 612 k€, résultat 38 k€, endettement 42 %, 41 jours de trésorerie.', result: { year: 2025, revenue: 612000, netIncome: 38000, equity: 210000, debtRatio: 0.42, cashDays: 41 } },
   items: { summary: 'Aucun sinistre ouvert, primes à jour.', result: { openClaims: [], unpaidPremiums: 0, pendingTermination: false } },
-  geo: { summary: 'Submersion marine forte, inondation moyenne, argiles faible (via MCP).', result: risks('La Rochelle', 'MEDIUM', 'HIGH', 'LOW', 2, 'NONE') },
+  geo: { summary: 'Submersion marine forte, inondation moyenne, argiles faible (via reShapr).', result: risks('La Rochelle', 'MEDIUM', 'HIGH', 'LOW', 2, 'NONE') },
   dq: { summary: 'Données cohérentes entre CRM, Sirene et bilans (score 94).', result: { status: 'VALID', score: 94, issues: [] } },
   climate: { summary: 'Risque climatique élevé : local en front de mer exposé à la submersion.', result: { level: 'HIGH', score: 78, drivers: ['Submersion marine HIGH', 'Inondation MEDIUM'], rationale: 'Local commercial sur le port, en zone de submersion marine forte.' } },
   health: { summary: 'Situation financière saine (score 81).', result: { level: 'SOUND', score: 81, rationale: 'Rentable, endettement maîtrisé, trésorerie confortable.' } },
@@ -81,7 +86,7 @@ out['100000002'] = eligible(c2, {
   legal: { summary: 'Aucune procédure collective : 2 annonces de routine.', result: { total: 2, records: [{ type: 'Immatriculation', nature: 'Création', date: '2004-09-01', court: 'Greffe du tribunal de commerce de Clermont-Ferrand' }, { type: 'Modification', nature: 'Transfert de siège', date: '2018-04-03', court: 'Greffe du tribunal de commerce de Clermont-Ferrand' }] } },
   fin: { summary: 'CA 1,84 M€, résultat 126 k€, endettement 31 %, 63 jours de trésorerie.', result: { year: 2025, revenue: 1840000, netIncome: 126000, equity: 640000, debtRatio: 0.31, cashDays: 63 } },
   items: { summary: '1 sinistre clos en cours de règlement, primes à jour.', result: { openClaims: [{ claimId: 'S-2025-0412', type: 'Bris de machine', amount: 3200, status: 'SETTLING', litigation: false }], unpaidPremiums: 0, pendingTermination: false } },
-  geo: { summary: 'Risques naturels faibles, sismicité modérée (via MCP).', result: risks('Clermont-Ferrand', 'LOW', 'NONE', 'LOW', 3, 'NONE') },
+  geo: { summary: 'Risques naturels faibles, sismicité modérée (via reShapr).', result: risks('Clermont-Ferrand', 'LOW', 'NONE', 'LOW', 3, 'NONE') },
   dq: { summary: 'Données cohérentes (score 97).', result: { status: 'VALID', score: 97, issues: [] } },
   climate: { summary: 'Risque climatique faible.', result: { level: 'LOW', score: 18, drivers: ['Inondation LOW'], rationale: 'Zone urbaine peu exposée.' } },
   health: { summary: 'Situation financière saine (score 88).', result: { level: 'SOUND', score: 88, rationale: 'Bonne rentabilité, fonds propres solides.' } },
@@ -116,7 +121,7 @@ out['100000004'] = eligible(c4, {
   legal: { summary: 'Aucune procédure collective.', result: { total: 1, records: [{ type: 'Immatriculation', nature: 'Création', date: '2015-06-20', court: 'Greffe du tribunal de commerce d\'Avignon' }] } },
   fin: { summary: 'CA 480 k€, perte de 22 k€, endettement 78 %, 9 jours de trésorerie.', result: { year: 2025, revenue: 480000, netIncome: -22000, equity: 41000, debtRatio: 0.78, cashDays: 9 } },
   items: { summary: '3 sinistres ouverts dont 1 en contentieux.', result: { openClaims: [{ claimId: 'S-2025-0877', type: 'Dégât des eaux', amount: 12400, status: 'OPEN', litigation: false }, { claimId: 'S-2026-0045', type: 'Responsabilité civile', amount: 38000, status: 'OPEN', litigation: true }, { claimId: 'S-2026-0310', type: 'Bris de glace', amount: 1900, status: 'OPEN', litigation: false }], unpaidPremiums: 0, pendingTermination: false } },
-  geo: { summary: 'Retrait-gonflement des argiles fort, inondation moyenne (via MCP).', result: risks('Avignon', 'MEDIUM', 'NONE', 'HIGH', 2, 'LOW') },
+  geo: { summary: 'Retrait-gonflement des argiles fort, inondation moyenne (via reShapr).', result: risks('Avignon', 'MEDIUM', 'NONE', 'HIGH', 2, 'LOW') },
   dq: { summary: 'Effectif déclaré (25) incohérent avec Sirene (6 à 9 salariés).', result: { status: 'WARNINGS', score: 61, issues: ['Effectif déclaré 25 vs tranche INSEE 6-9', 'Bilan 2025 sans annexe'] } },
   climate: { summary: 'Risque climatique élevé : argiles fort et inondation moyenne.', result: { level: 'HIGH', score: 71, drivers: ['Retrait-gonflement des argiles HIGH', 'Inondation MEDIUM'], rationale: 'Bâti ancien exposé aux mouvements de terrain.' } },
   health: { summary: 'Situation financière fragile (score 38).', result: { level: 'FRAGILE', score: 38, rationale: 'Exercice en perte, trésorerie tendue, endettement élevé.' } },

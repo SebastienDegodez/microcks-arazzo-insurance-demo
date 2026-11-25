@@ -133,7 +133,7 @@
         ]
       },
       "climateRisk": {
-        "summary": "Risque climatique élevé : local en front de mer exposé à la submersion.",
+        "summary": "Risque climatique élevé : local en front de mer exposé à la submersion (Géorisques et BODACC interrogés via reShapr).",
         "result": {
           "level": "HIGH",
           "score": 78,
@@ -176,6 +176,12 @@
           },
           {
             "method": "POST",
+            "url": "http://localhost:7778/mcp/reshapr/bodacc-1-0-0-default",
+            "status": 200,
+            "via": "MCP"
+          },
+          {
+            "method": "POST",
             "url": "http://localhost:8080/rest/LLM+gateway/1.0.0/v1/chat/completions",
             "status": 200,
             "via": "LLM"
@@ -188,6 +194,12 @@
           },
           {
             "method": "POST",
+            "url": "http://localhost:7778/mcp/reshapr/bodacc-1-0-0-default",
+            "status": 200,
+            "via": "MCP"
+          },
+          {
+            "method": "POST",
             "url": "http://localhost:8080/rest/LLM+gateway/1.0.0/v1/chat/completions",
             "status": 200,
             "via": "LLM"
@@ -195,13 +207,31 @@
         ]
       },
       "financialHealth": {
-        "summary": "Situation financière saine (score 81).",
+        "summary": "Situation financière saine (score 81) : comptes annuels lus par l'outil MCP de Microcks.",
         "result": {
           "level": "SOUND",
           "score": 81,
           "rationale": "Rentable, endettement maîtrisé, trésorerie confortable."
         },
         "calls": [
+          {
+            "method": "POST",
+            "url": "http://localhost:8080/mcp/Company%20financials/1.0.0",
+            "status": 200,
+            "via": "MCP"
+          },
+          {
+            "method": "POST",
+            "url": "http://localhost:8080/rest/LLM+gateway/1.0.0/v1/chat/completions",
+            "status": 200,
+            "via": "LLM"
+          },
+          {
+            "method": "POST",
+            "url": "http://localhost:8080/mcp/Company%20financials/1.0.0",
+            "status": 200,
+            "via": "MCP"
+          },
           {
             "method": "POST",
             "url": "http://localhost:8080/rest/LLM+gateway/1.0.0/v1/chat/completions",
@@ -402,7 +432,7 @@
         ]
       },
       "climateRisk": {
-        "summary": "Risque climatique faible.",
+        "summary": "Risque climatique faible (Géorisques et BODACC interrogés via reShapr).",
         "result": {
           "level": "LOW",
           "score": 18,
@@ -444,6 +474,12 @@
           },
           {
             "method": "POST",
+            "url": "http://localhost:7778/mcp/reshapr/bodacc-1-0-0-default",
+            "status": 200,
+            "via": "MCP"
+          },
+          {
+            "method": "POST",
             "url": "http://localhost:8080/rest/LLM+gateway/1.0.0/v1/chat/completions",
             "status": 200,
             "via": "LLM"
@@ -456,6 +492,12 @@
           },
           {
             "method": "POST",
+            "url": "http://localhost:7778/mcp/reshapr/bodacc-1-0-0-default",
+            "status": 200,
+            "via": "MCP"
+          },
+          {
+            "method": "POST",
             "url": "http://localhost:8080/rest/LLM+gateway/1.0.0/v1/chat/completions",
             "status": 200,
             "via": "LLM"
@@ -463,13 +505,31 @@
         ]
       },
       "financialHealth": {
-        "summary": "Situation financière saine (score 88).",
+        "summary": "Situation financière saine (score 88) : comptes annuels lus par l'outil MCP de Microcks.",
         "result": {
           "level": "SOUND",
           "score": 88,
           "rationale": "Bonne rentabilité, fonds propres solides."
         },
         "calls": [
+          {
+            "method": "POST",
+            "url": "http://localhost:8080/mcp/Company%20financials/1.0.0",
+            "status": 200,
+            "via": "MCP"
+          },
+          {
+            "method": "POST",
+            "url": "http://localhost:8080/rest/LLM+gateway/1.0.0/v1/chat/completions",
+            "status": 200,
+            "via": "LLM"
+          },
+          {
+            "method": "POST",
+            "url": "http://localhost:8080/mcp/Company%20financials/1.0.0",
+            "status": 200,
+            "via": "MCP"
+          },
           {
             "method": "POST",
             "url": "http://localhost:8080/rest/LLM+gateway/1.0.0/v1/chat/completions",
@@ -876,7 +936,7 @@
         ]
       },
       "climateRisk": {
-        "summary": "Risque climatique élevé : argiles fort et inondation moyenne.",
+        "summary": "Risque climatique élevé : argiles fort et inondation moyenne (Géorisques et BODACC interrogés via reShapr).",
         "result": {
           "level": "HIGH",
           "score": 71,
@@ -919,6 +979,12 @@
           },
           {
             "method": "POST",
+            "url": "http://localhost:7778/mcp/reshapr/bodacc-1-0-0-default",
+            "status": 200,
+            "via": "MCP"
+          },
+          {
+            "method": "POST",
             "url": "http://localhost:8080/rest/LLM+gateway/1.0.0/v1/chat/completions",
             "status": 200,
             "via": "LLM"
@@ -931,6 +997,12 @@
           },
           {
             "method": "POST",
+            "url": "http://localhost:7778/mcp/reshapr/bodacc-1-0-0-default",
+            "status": 200,
+            "via": "MCP"
+          },
+          {
+            "method": "POST",
             "url": "http://localhost:8080/rest/LLM+gateway/1.0.0/v1/chat/completions",
             "status": 200,
             "via": "LLM"
@@ -938,13 +1010,31 @@
         ]
       },
       "financialHealth": {
-        "summary": "Situation financière fragile (score 38).",
+        "summary": "Situation financière fragile (score 38) : comptes annuels lus par l'outil MCP de Microcks.",
         "result": {
           "level": "FRAGILE",
           "score": 38,
           "rationale": "Exercice en perte, trésorerie tendue, endettement élevé."
         },
         "calls": [
+          {
+            "method": "POST",
+            "url": "http://localhost:8080/mcp/Company%20financials/1.0.0",
+            "status": 200,
+            "via": "MCP"
+          },
+          {
+            "method": "POST",
+            "url": "http://localhost:8080/rest/LLM+gateway/1.0.0/v1/chat/completions",
+            "status": 200,
+            "via": "LLM"
+          },
+          {
+            "method": "POST",
+            "url": "http://localhost:8080/mcp/Company%20financials/1.0.0",
+            "status": 200,
+            "via": "MCP"
+          },
           {
             "method": "POST",
             "url": "http://localhost:8080/rest/LLM+gateway/1.0.0/v1/chat/completions",

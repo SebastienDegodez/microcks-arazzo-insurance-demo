@@ -14,6 +14,7 @@ public sealed class UnderwritingWorkflowTests(MicrocksFixture microcks)
 {
     private const string Document = "Commercial underwriting:1.0.0";
     private const string Guards = "Commercial underwriting guards:1.0.0";
+    private const string AgentTools = "Commercial underwriting agent tools:1.0.0";
     private const string Collection = "orchestratorCollectsCompanyData";
     private const string HealthyCompany = "100000002";       // Atelier Mécanique Durand, C-1002, ACCEPT, STANDARD
     private const string OtherCompany = "100000003";          // the company of the BODACC collective procedure
@@ -81,6 +82,43 @@ public sealed class UnderwritingWorkflowTests(MicrocksFixture microcks)
             verdict.Step("companyIdentity").Message);
     }
 
+    // ----- The MCP tools of the agents --------------------------------------------------------------------------
+
+    [Fact(Timeout = 240_000)]
+    public async Task TheClimateAgentToolsGoThroughReshapr()
+    {
+        Assert.SkipUnless(MicrocksFixture.ReshaprUrl is not null,
+            "Needs reShapr (scripts/start-reshapr.sh) and RESHAPR_MCP_URL, e.g. http://localhost:7778.");
+
+        var (climate, verdict) = await PlayInSessionAsync(
+            new ArazzoSessionRequest(AgentTools, "climateToolsGoThroughReshapr", SirenInput(HealthyCompany)),
+            (desk, ct) => desk.RunUntilStepEndsAsync(HealthyCompany, "climateRisk", ct),
+            climateToolsThroughReshapr: true);
+
+        // The LLM mock accepted the toolset (else 400 missing-tools), and the model's tool calls reached the APIs
+        Assert.Equal("DONE", climate["steps"]!["climateRisk"]!["status"]!.GetValue<string>());
+        Assert.True(verdict.Succeeded, verdict.Explain());
+        Assert.Equal(200, verdict.Step("climateNaturalRisks").StatusCode);   // with the INSEE code of Sirene
+        Assert.Equal(200, verdict.Step("climateLegalEvents").StatusCode);    // the second BODACC call, by reShapr
+        Assert.Equal("63113", verdict.Outputs!["inseeCityCode"].GetString());
+    }
+
+    [Fact(Timeout = 180_000)]
+    public async Task AnOrchestratorThatForgetsAToolIsCaught()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var orchestrator = new OrchestratorFactory(microcks, Sabotage.ForgetBodaccTool);
+        var desk = new UnderwritingDesk(orchestrator.CreateClient());
+
+        var current = await desk.RunUntilStepEndsAsync(HealthyCompany, "climateRisk", ct);
+
+        // The LLM mock checks the toolset: without get_annonces, it answers 400 missing-tools, and the step fails
+        var climate = current["steps"]!["climateRisk"]!;
+        Assert.Equal("FAILED", climate["status"]!.GetValue<string>());
+        Assert.Equal("Échec : LLM : réponse HTTP 400", climate["summary"]!.GetValue<string>());
+        Assert.Equal(["MCP", "MCP", "LLM"], climate["calls"]!.AsArray().Select(c => c!["via"]!.GetValue<string>()));
+    }
+
     // ----- Act 5: injected failures (S17) --------------------------------------------------------------------
 
     [Fact(Timeout = 180_000)]
@@ -141,14 +179,15 @@ public sealed class UnderwritingWorkflowTests(MicrocksFixture microcks)
     private async Task<(T Outcome, WorkflowResult Verdict)> PlayInSessionAsync<T>(
         ArazzoSessionRequest request,
         Func<UnderwritingDesk, CancellationToken, Task<T>> play,
-        Action<IServiceCollection>? sabotage = null)
+        Action<IServiceCollection>? sabotage = null,
+        bool climateToolsThroughReshapr = false)
     {
         var ct = TestContext.Current.CancellationToken;
         var arazzo = microcks.Arazzo();
         var session = await arazzo.OpenSessionAsync(request, ct);
         try
         {
-            await using var orchestrator = new OrchestratorFactory(microcks, sabotage);
+            await using var orchestrator = new OrchestratorFactory(microcks, sabotage, climateToolsThroughReshapr);
             var outcome = await play(new UnderwritingDesk(orchestrator.CreateClientInSession(session.Id)), ct);
             var verdict = await arazzo.VerifyAsync(session.Id, ct);
             TestContext.Current.TestOutputHelper?.WriteLine(verdict.Explain());

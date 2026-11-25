@@ -72,8 +72,8 @@ public static class MicrocksSessionServiceCollectionExtensions
     {
         services.AddTransient<IStartupFilter, MicrocksSessionStartupFilter>();
         services.AddTransient<SessionPropagationHandler>();
-        // .NET 8+: applies to every IHttpClientFactory client, including the typed CompanyDataApis, McpClient and
-        // LlmGatewayClient registered by the orchestrator's Program.cs
+        // .NET 8+: applies to every IHttpClientFactory client: the typed CompanyDataApis, and the named "mcp" and
+        // "llm-gateway" clients whose handlers carry the MCP SDK and OpenAI calls of the orchestrator
         services.ConfigureHttpClientDefaults(http => http.AddHttpMessageHandler<SessionPropagationHandler>());
         return services;
     }

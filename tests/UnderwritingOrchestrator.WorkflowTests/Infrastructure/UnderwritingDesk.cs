@@ -35,6 +35,17 @@ public sealed class UnderwritingDesk(HttpClient orchestrator)
         await WaitUntilAsync(await OpenAsync(siren, ct),
             c => PendingAction(c) is not null || StoppedStatuses.Contains(c["status"]?.GetValue<string>()), ct);
 
+    /// <summary>Opens a case and validates the data, then waits until a step has ended (DONE or FAILED).</summary>
+    public async Task<JsonNode> RunUntilStepEndsAsync(string siren, string stepId, CancellationToken ct)
+    {
+        var caseId = await OpenAsync(siren, ct);
+        await WaitUntilAsync(caseId, c => PendingAction(c) == "DATA_REVIEW", ct);
+        await PostAsync($"underwriting-cases/{caseId}/data-review",
+            new { confirmed = true, corrections = new { }, comment = "Données vérifiées par le conseiller." }, ct);
+        return await WaitUntilAsync(caseId,
+            c => c["steps"]?[stepId]?["status"]?.GetValue<string>() is "DONE" or "FAILED", ct);
+    }
+
     private static string? PendingAction(JsonNode current) => current["pendingAction"]?.GetValue<string>();
 
     private async Task<string> OpenAsync(string siren, CancellationToken ct)
