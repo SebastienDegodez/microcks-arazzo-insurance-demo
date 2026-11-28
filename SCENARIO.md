@@ -122,6 +122,37 @@ du `calls[].url` qui expose le MCP (Microcks dans le cadre, ou reShapr hors du c
 - Arazzo : les workflows ne connaissent plus `geoRisks` ; ils vérifient que `climateRisk.calls` contient bien un
   appel `via == 'MCP'` (le `tools/call`) encadré par deux appels `via == 'LLM'`.
 
+## v4 — deux agents à outils, des librairies standard, des dispatchers JS (normatif, remplace v3 sur les outils)
+
+- **Le modèle n'appelle jamais un outil.** Il répond par des `tool_calls` ; c'est l'orchestrateur qui exécute chaque
+  appel via MCP et renvoie le résultat (`role: tool`). L'orchestrateur n'a plus de boucle écrite à la main : agents
+  **Microsoft Agent Framework** (`ChatClientAgent`) sur le client OpenAI Chat Completions de `Microsoft.Extensions.AI`,
+  serveurs MCP ouverts avec le **SDK MCP C# officiel** (`ModelContextProtocol.Core`).
+- **Exemple 1, « Microcks pur » — `financialHealth` (agent `financial-health`)** : l'outil
+  `get_companies_siren_financials` est servi par l'**endpoint MCP natif de Microcks** du mock `Company financials`
+  (`http://localhost:8080/mcp/Company%20financials/1.0.0`, `Mcp:CompanyFinancials`). L'agent lit lui-même les comptes
+  annuels ; ils ne sont plus dans son prompt. `calls` = MCP `tools/list`, LLM (`tool_calls`), MCP `tools/call`, LLM.
+- **Exemple 2, via reShapr — `climateRisk` (agent `climate-risk`)** : deux serveurs MCP exposés par reShapr, hors de
+  Microcks, devant les mocks Microcks : Géorisques (`get_resultats_rapport_risque`, `Mcp:Georisques`) et BODACC
+  (`get_annonces`, `Mcp:Bodacc`, pour vérifier qu'aucun transfert de siège ne rend l'adresse caduque). Le modèle
+  demande les deux outils d'un coup. `calls` = MCP `tools/list` ×2, LLM, MCP `tools/call` ×2, LLM.
+- **Le LLM mocké vérifie les outils reçus** : pour un agent à outils, le dispatcher JS exige chaque outil attendu avec
+  ses arguments obligatoires (sinon **400 `missing-tools`**), puis renvoie `<agent>-<siren>-tool-calls` tant que la
+  requête ne contient aucun message `role: tool`, et `<agent>-<siren>` ensuite. C'est ce qui teste que l'application
+  donne les bons outils au modèle.
+- **reShapr transmet les en-têtes au backend** : `x-microcks-delay` et `x-microcks-session` arrivent aux mocks. Une
+  session Arazzo voit donc les appels d'outils de l'exemple 2 (document *Commercial underwriting agent tools*, workflow
+  `climateToolsGoThroughReshapr` : la collecte, puis Géorisques avec le code INSEE de Sirene, puis un second appel au
+  BODACC). L'endpoint MCP natif de Microcks, lui, ignore ces en-têtes et n'enregistre rien dans la session.
+- **Définition et mock séparés** : chaque API tient en `<api>.openapi.yaml` (OpenAPI pur, en anglais), plus
+  `<api>.microcks-metadata.yaml` (`APIMetadata` : dispatcher, règles, latence, qui remplace `x-microcks-operation`) et
+  `<api>.microcks-examples.yaml` (`APIExamples` : les exemples nommés).
+- **Tous les dispatchers scriptés sont en `dispatcher: JS`** (plus de Groovy). `Georisques` et `BODACC` passent de
+  `SCRIPT`/`URI_PARAMS` à JS : un `tools/call` sur l'endpoint MCP natif double la query string avec `URI_PARAMS`.
+- Arazzo : `waitForSuggestion` vérifie les `via` des deux boucles : `MCP, MCP, LLM, MCP, MCP, LLM` pour
+  `climateRisk`, `MCP, LLM, MCP, LLM` pour `financialHealth`. L'override de latence `financial-health` (50 s) disparaît :
+  l'outil des comptes annuels porte déjà 30 à 60 s.
+
 ## L'orchestrateur : `Underwriting cases` 1.0.0 (port 5180)
 
 Son contrat OpenAPI est `contracts/underwriting-cases.openapi.yaml` (`info.title: Underwriting cases`). Il est

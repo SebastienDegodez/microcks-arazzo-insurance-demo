@@ -16,8 +16,8 @@ export const DEFAULT_STEPS = [
   ['openItems', 'Sinistres et contrats', 2, 'PARALLEL', 'SERVICE', ['checkAccount']],
   ['dataQuality', 'Contrôle de la collecte', 2, 'CHAIN', 'LLM', ['checkAccount', 'companyIdentity', 'financials']],
   ['dataReview', 'Validation des données', 3, 'CHAIN', 'HUMAN', ['companyIdentity', 'legalEvents', 'financials', 'openItems', 'dataQuality']],
-  ['climateRisk', 'Analyse risque climatique', 4, 'PARALLEL', 'LLM', ['companyIdentity', 'dataQuality']],
-  ['financialHealth', 'Analyse santé financière', 4, 'PARALLEL', 'LLM', ['financials', 'legalEvents', 'dataReview']],
+  ['climateRisk', "Analyse du risque climatique (outils Géorisques et BODACC via reShapr)", 4, 'PARALLEL', 'LLM', ['companyIdentity', 'dataQuality']],
+  ['financialHealth', "Analyse de la santé financière (outil comptes annuels via le MCP de Microcks)", 4, 'PARALLEL', 'LLM', ['financials', 'legalEvents', 'dataReview']],
   ['openItemsReview', 'Analyse sinistres et contrats', 4, 'PARALLEL', 'LLM', ['openItems', 'dataQuality']],
   ['synthesis', 'Synthèse des analyses', 5, 'CHAIN', 'LLM', ['climateRisk', 'financialHealth', 'openItemsReview', 'dataReview']],
   ['advisorDecision', 'Décision du conseiller', 6, 'CHAIN', 'HUMAN', ['synthesis']],
@@ -151,7 +151,8 @@ export function blockedByAdvisor(c, step) {
   return deps.every(d => d === human || ['DONE', 'SKIPPED', 'FAILED'].includes(steps[d]?.status)) ? human : null;
 }
 
-// v3: the natural risks come from the climate agent, which fetched them with its MCP tool (reShapr → Géorisques).
+// v3: the natural risks come from the climate agent, which fetched them with its MCP tools (Géorisques and BODACC,
+// exposed by reShapr). The financial agent has its own tool, served by the native MCP endpoint of Microcks.
 // { commune, risquesNaturels } — older cases carried them in a geoRisks step.
 export function naturalRisksOf(c) {
   return c?.steps?.climateRisk?.result?.naturalRisks || c?.steps?.geoRisks?.result || null;

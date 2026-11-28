@@ -25,6 +25,30 @@ call() {
   rm -f "$body"
 }
 
+# The MCP tools the orchestrator hands to the two tool-using agents (name and required arguments are checked).
+GEO_TOOL='{"type":"function","function":{"name":"get_resultats_rapport_risque","parameters":{"type":"object","required":["code_insee","latlon"]}}}'
+BODACC_TOOL='{"type":"function","function":{"name":"get_annonces","parameters":{"type":"object","required":["siren"]}}}'
+FINANCIALS_TOOL='{"type":"function","function":{"name":"get_companies_siren_financials","parameters":{"type":"object","required":["siren"]}}}'
+tools_of() { # agent -> the "tools" member of its chat completion request, or nothing
+  case "$1" in
+    climate-risk) echo ",\"tools\":[$GEO_TOOL,$BODACC_TOOL]" ;;
+    financial-health) echo ",\"tools\":[$FINANCIALS_TOOL]" ;;
+  esac
+}
+
+# label, expected status, jq filter, agent, siren, extra messages, tools member
+llm_call() {
+  call "$1" "$2" "$3" -X POST "$M/rest/LLM+gateway/1.0.0/v1/chat/completions" -H 'Content-Type: application/json' \
+    -d "{\"model\":\"gpt-4o-mini\",\"messages\":[{\"role\":\"user\",\"content\":\"...\"}$6]$7,\"metadata\":{\"agent\":\"$4\",\"siren\":\"$5\"}}"
+}
+
+# label, Microcks API (URL-encoded), tool, arguments, jq filter on the tool output: Microcks' native MCP endpoint
+mcp_call() {
+  call "$1" 200 "{isError:.result.isError,out:(.result.content[0].text|fromjson|$5)}" \
+    -X POST "$M/mcp/$2/1.0.0" -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+    -d "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"$3\",\"arguments\":$4}}"
+}
+
 siren_checks() { # siren customerId insee latlon
   call "Customer accounts $1" 200 '{customerId,name}' "$M/rest/Customer+accounts/1.0.0/customers/by-siren/$1" &
   call "Sirene $1" 200 '{denomination,insee:.address.inseeCityCode}' "$M/rest/Sirene/1.0.0/siren/$1" &
@@ -33,20 +57,24 @@ siren_checks() { # siren customerId insee latlon
   call "Claims and contracts $1" 200 '{customerId,claims:(.openClaims|length)}' \
     "$M/rest/Claims+and+contracts/1.0.0/customers/$2/open-items" &
   call "Georisques REST $1" 200 '{commune}' "$M/rest/Georisques/1.0.0/resultats_rapport_risque?code_insee=$3&latlon=$4" &
-  call "Georisques MCP tools/call $1" 200 '{isError:.result.isError,commune:(.result.content[0].text|fromjson|.commune)}' \
-    -X POST "$M/mcp/Georisques/1.0.0" -H 'Content-Type: application/json' \
-    -d "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"get_resultats_rapport_risque\",\"arguments\":{\"code_insee\":\"$3\",\"latlon\":\"$4\"}}}" &
-  local tool='{"role":"tool","tool_call_id":"call_georisques","content":"{}"}'
+  mcp_call "Georisques MCP tools/call $1" Georisques get_resultats_rapport_risque \
+    "{\"code_insee\":\"$3\",\"latlon\":\"$4\"}" '.commune' &
+  mcp_call "BODACC MCP tools/call $1" BODACC get_annonces "{\"siren\":\"$1\"}" '.total' &
+  mcp_call "Company financials MCP tools/call $1" "Company%20financials" get_companies_siren_financials \
+    "{\"siren\":\"$1\"}" '.revenue' &
+  [[ "$1" == 100000003 ]] && { wait; return; }
   for agent in data-quality climate-risk financial-health open-items verdict; do
-    [[ "$1" == 100000003 ]] && break
-    call "LLM $agent-$1" 200 '.choices[0].message.content|fromjson|del(.rationale,.drivers,.issues)' \
-      -X POST "$M/rest/LLM+gateway/1.0.0/v1/chat/completions" -H 'Content-Type: application/json' \
-      -d "{\"model\":\"gpt-4o-mini\",\"messages\":[{\"role\":\"user\",\"content\":\"...\"}$([[ $agent == climate-risk ]] && echo ",$tool")],\"metadata\":{\"agent\":\"$agent\",\"siren\":\"$1\"}}" &
+    # A tool-using agent gets its tools; its final answer comes once a role: tool message is there.
+    local tool=""; [[ -n "$(tools_of $agent)" ]] && tool=',{"role":"tool","tool_call_id":"call_1","content":"{}"}'
+    llm_call "LLM $agent-$1" 200 '.choices[0].message.content|fromjson|del(.rationale,.drivers,.issues)' \
+      "$agent" "$1" "$tool" "$(tools_of $agent)" &
   done
-  [[ "$1" != 100000003 ]] && call "LLM climate-risk-$1-tool-call" 200 \
-    '.choices[0] | {finish_reason, tool: .message.tool_calls[0].function}' \
-    -X POST "$M/rest/LLM+gateway/1.0.0/v1/chat/completions" -H 'Content-Type: application/json' \
-    -d "{\"model\":\"gpt-4o-mini\",\"messages\":[{\"role\":\"user\",\"content\":\"...\"}],\"metadata\":{\"agent\":\"climate-risk\",\"siren\":\"$1\"}}" &
+  for agent in climate-risk financial-health; do
+    llm_call "LLM $agent-$1-tool-calls" 200 '.choices[0] | {finish_reason, tools: [.message.tool_calls[].function.name]}' \
+      "$agent" "$1" "" "$(tools_of $agent)" &
+  done
+  # The mock checks the toolset: the climate agent without its BODACC tool is refused.
+  llm_call "LLM climate-risk-$1 missing tool" 400 '.error.code' climate-risk "$1" "" ",\"tools\":[$GEO_TOOL]" &
   wait
 }
 
@@ -71,7 +99,7 @@ drive_case() { # siren
       reco="$(printf '%s' "$c" | jq -r .recommendation.decision)"
       codes="$(printf '%s' "$c" | jq -c '[.escalation.reasons[].code]')"
       check "Orchestrator DECISION case-$s after $(( $(date +%s) - t0 )) s" WAITING_ADVISOR \
-        "$(printf '%s' "$c" | jq -r .status)" "$(printf '%s' "$c" | jq -c '{suggestion: .recommendation.decision, source: .recommendation.source, escalation: .escalation.level, reasons: [.escalation.reasons[].code], climateCalls: [.steps.climateRisk.calls[].via], naturalRisks: (.steps.climateRisk.result.naturalRisks.commune)}')"
+        "$(printf '%s' "$c" | jq -r .status)" "$(printf '%s' "$c" | jq -c '{suggestion: .recommendation.decision, source: .recommendation.source, escalation: .escalation.level, reasons: [.escalation.reasons[].code], climateCalls: [.steps.climateRisk.calls[].via], financialHealthCalls: [.steps.financialHealth.calls[].via], naturalRisks: (.steps.climateRisk.result.naturalRisks.commune)}')"
       if [[ "$(printf '%s' "$c" | jq -r .escalation.level)" == REINFORCED ]]; then
         call "Orchestrator reinforced decision without acknowledging case-$s" 400 '.code' "${post[@]}" \
           "$U/case-$s/advisor-decision" -d "{\"finalDecision\":\"$reco\",\"comment\":\"vu\"}"

@@ -65,12 +65,21 @@ public static class StepSummaries
         $"Données {output["status"]} (score {output["score"]})" +
         (output["issues"] is JsonArray { Count: > 0 } issues ? $" : {string.Join(" ; ", issues)}" : ".");
 
+    /// <summary>The Géorisques report among the tool outputs of the climate agent.</summary>
+    public static JsonNode? NaturalRisksReport(AgentRun run) =>
+        run.ToolRuns.LastOrDefault(tool => tool.Output["risquesNaturels"] is not null)?.Output;
+
     public static string ClimateRisk(AgentRun run) =>
         $"Risque climatique {run.Output["level"]} (score {run.Output["score"]}) : {run.Output["rationale"]}" +
-        string.Concat(run.ToolRuns.Select(tool => $" Outil MCP {tool.Name} : {NaturalRisks(tool.Output)}."));
+        (NaturalRisksReport(run) is { } report ? $" Outil Géorisques : {NaturalRisks(report)}." : "") +
+        ToolsUsed(run);
 
-    public static string FinancialHealth(JsonObject output) =>
-        $"Santé financière {output["level"]} (score {output["score"]}) : {output["rationale"]}";
+    public static string FinancialHealth(AgentRun run) =>
+        $"Santé financière {run.Output["level"]} (score {run.Output["score"]}) : {run.Output["rationale"]}" +
+        ToolsUsed(run);
+
+    private static string ToolsUsed(AgentRun run) =>
+        run.ToolRuns.Count == 0 ? "" : $" Outils MCP appelés : {string.Join(", ", run.ToolRuns.Select(t => t.Name))}.";
 
     public static string OpenItemsReview(JsonObject output) =>
         $"Complexité {output["complexity"]}, {(output["manageable"]?.ToString() == "true" ? "gérable" : "non gérable")} : {output["rationale"]}";

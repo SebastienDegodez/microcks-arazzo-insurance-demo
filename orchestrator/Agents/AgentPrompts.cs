@@ -6,13 +6,11 @@ using UnderwritingOrchestrator.Underwriting;
 
 namespace UnderwritingOrchestrator.Agents;
 
-/// <summary>What is sent to an LLM agent. <see cref="Agent"/> is also sent as metadata.agent.</summary>
-public sealed record AgentPrompt(string Agent, string System, string User)
-{
-    public JsonArray Messages() => new(
-        new JsonObject { ["role"] = "system", ["content"] = System },
-        new JsonObject { ["role"] = "user", ["content"] = User });
-}
+/// <summary>
+/// What is sent to an LLM agent: its instructions (system message) and the case (user message).
+/// <see cref="Agent"/> is also sent as metadata.agent.
+/// </summary>
+public sealed record AgentPrompt(string Agent, string System, string User);
 
 /// <summary>
 /// The system and user prompts of the five agents, fed with the data gathered by the previous steps and the advisor's
@@ -43,13 +41,15 @@ public static class AgentPrompts
          {Json(facts.Financials)}
          """);
 
-    /// <summary>The climate agent has a tool: it fetches the natural-risk report itself, through MCP.</summary>
+    /// <summary>The climate agent has tools (reShapr): it fetches the natural-risk report and the BODACC itself.</summary>
     public static AgentPrompt ClimateRisk(CaseFacts facts) => new("climate-risk",
         Context + "Tu es l'analyste « risque climatique ». Tu disposes d'outils : commence par appeler celui qui donne " +
-        "le rapport des risques naturels d'une commune (code INSEE, et coordonnées au format \"longitude,latitude\"). " +
+        "le rapport des risques naturels d'une commune (code INSEE, et coordonnées au format \"longitude,latitude\"), " +
+        "et celui des annonces BODACC de l'entreprise (SIREN), pour vérifier qu'aucun transfert de siège ne rend " +
+        "l'adresse des locaux caduque. " +
         "À partir de ce rapport, évalue l'exposition des locaux aux risques naturels (inondation, submersion marine, " +
         "retrait-gonflement des argiles, séisme, feux de forêt) au regard de l'activité. " +
-        "Une fois le rapport obtenu, " + JsonOnly +
+        "Une fois les résultats des outils obtenus, " + JsonOnly +
         """{"level": "LOW|MEDIUM|HIGH|VERY_HIGH", "score": 0-100, "drivers": ["…"], "rationale": "…"}""",
         $"""
          Entreprise SIREN {facts.Siren} : {facts.Identity?["denomination"]}, activité {facts.Identity?["nafLabel"]}.
@@ -59,15 +59,15 @@ public static class AgentPrompts
          {Json(facts.Identity?["address"])}
          """);
 
+    /// <summary>The financial-health agent has a tool (Microcks' native MCP): it reads the last balance sheet itself.</summary>
     public static AgentPrompt FinancialHealth(CaseFacts facts) => new("financial-health",
-        Context + "Tu es l'analyste « santé financière ». À partir du dernier bilan, tu juges la solidité de l'entreprise : " +
+        Context + "Tu es l'analyste « santé financière ». Tu disposes d'un outil : commence par l'appeler avec le SIREN " +
+        "pour lire les derniers comptes annuels. À partir de ce bilan, tu juges la solidité de l'entreprise : " +
         "chiffre d'affaires, résultat net, fonds propres, taux d'endettement, trésorerie en jours de chiffre d'affaires. " +
         JsonOnly + """{"level": "SOUND|FRAGILE|CRITICAL", "score": 0-100, "rationale": "…"}""",
         $"""
          Entreprise SIREN {facts.Siren} : {facts.Identity?["denomination"]}, activité {facts.Identity?["nafLabel"]},
          tranche d'effectif {facts.Identity?["headcountRange"]}, créée le {facts.Identity?["creationDate"]}.
-         Dernier bilan :
-         {Json(facts.Financials)}
          Annonces légales (BODACC) :
          {Json(facts.LegalEvents)}
          Validation des données par le conseiller (ses corrections priment) :

@@ -39,12 +39,16 @@ backend injoignable renvoie 502 avec `X-Bff-Error: unreachable`.
   - un paquet de requête part quand une étape passe RUNNING, et sa cible pulse tant qu'elle travaille ;
   - la réponse revient quand l'étape se termine ;
   - les POST du conseiller apparaissent aussi, et le dossier peut être rejoué à la fin.
-  - Le serveur MCP est toujours « reShapr (MCP) », hors du cadre Microcks. L'agent climat suit ses `calls` : MCP
-    `tools/list`, le modèle qui demande l'outil, l'outil exécuté pour lui via reShapr → Géorisques (mock Microcks),
-    puis le modèle avec le résultat.
+  - Deux agents ont des outils MCP, et chacun suit ses `calls` : `tools/list` sur chaque serveur MCP, le modèle qui
+    répond par des `tool_calls` (il n'appelle jamais un outil lui-même), chaque outil exécuté **par l'orchestrateur**,
+    puis le modèle avec les résultats.
+    - Agent climat (exemple 2) : « reShapr (MCP) », hors du cadre Microcks, expose Géorisques et BODACC en MCP ;
+      l'orchestrateur → reShapr → mock Microcks (Géorisques, BODACC), puis retour.
+    - Agent santé financière (exemple 1, Microcks pur) : l'outil `get_companies_siren_financials` est servi par le
+      MCP natif de Microcks (`/mcp/Company%20financials/1.0.0`) : l'orchestrateur → nœud « Bilans », sans reShapr.
   - En mode « Microcks (mock) », seul l'échange IHM ⇄ Microcks est animé : aucun appel réel n'est fait en aval.
-    Les nœuds restent au repos, et seul l'orchestrateur, hors circuit, est grisé. reShapr est relié au LLM par un
-    lien pointillé « outil du modèle » : il est référencé par l'orchestrateur réel.
+    Les nœuds restent au repos, et seul l'orchestrateur, hors circuit, est grisé. reShapr reste relié à Géorisques
+    et BODACC : il n'est appelé que par l'orchestrateur réel.
 - **Cartes** : un SVG dessiné par la page, libellé « Carte illustrative », sans tuile ni service externe. Les
   risques naturels viennent de `climateRisk.result.naturalRisks`.
 

@@ -169,7 +169,7 @@ export function risks(c, now) {
         ${geo ? `<table class="risk-table"><thead><tr><th scope="col">Risque</th><th scope="col">Niveau</th><th scope="col"><span class="sr-only">Échelle</span></th></tr></thead><tbody>
           ${Object.entries(RISK_NAMES).map(([k, name]) => { const l = rn[k]?.level || 'NONE'; return `<tr><th scope="row">${esc(name)}</th><td>${level(l)}</td><td><span class="meter" aria-hidden="true"><span style="width:${W[l] * 25}%" class="l-${l}"></span></span></td></tr>`; }).join('')}
           <tr><th scope="row">Sismicité</th><td>zone ${esc(rn.seisme?.zone ?? '—')}</td><td></td></tr></tbody></table>
-          <p class="note">Commune : ${esc(geo.commune || id?.address?.city || '—')} · obtenus par l'agent climat avec son outil MCP : reShapr expose Géorisques, Microcks simule l'API derrière lui.</p>` : `<p class="muted">${esc(m.climateRisk?.status === 'SKIPPED' ? 'Analyse climat non exécutée : pas de risques naturels.' : 'L\'agent climat va chercher les risques naturels avec son outil MCP (reShapr → Géorisques).')}</p>`}
+          <p class="note">Commune : ${esc(geo.commune || id?.address?.city || '—')} · obtenus par l'agent climat avec ses outils MCP : reShapr expose Géorisques et BODACC, Microcks simule les API derrière lui.</p>` : `<p class="muted">${esc(m.climateRisk?.status === 'SKIPPED' ? 'Analyse climat non exécutée : pas de risques naturels.' : 'L\'agent climat va chercher les risques naturels avec ses outils MCP (reShapr → Géorisques et BODACC).')}</p>`}
       </section>
       ${analysisBlock(c, 'climateRisk', 'Analyse du risque climatique', now)}
     </div></div>`;

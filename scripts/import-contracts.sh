@@ -4,8 +4,13 @@
 #   scripts/import-contracts.sh [only-file...]
 #
 # Idempotent: Microcks upserts a service by name and version, and an Arazzo document by title and version, so
-# re-running the script replaces what it imported before and touches nothing else. The OpenAPI contracts and the
-# Arazzo document are main artifacts; the ArazzoSources overlay is a secondary artifact, imported last.
+# re-running the script replaces what it imported before and touches nothing else.
+#
+# Each API has three files: <api>.openapi.yaml, the pure API definition (main artifact), then the Microcks-only
+# <api>.microcks-metadata.yaml (APIMetadata: dispatcher, rules, latency) and <api>.microcks-examples.yaml
+# (APIExamples: named request/response pairs), both secondary artifacts, metadata first so that the examples get
+# their dispatch criteria. Selecting an OpenAPI file re-imports its two Microcks files too. The Arazzo documents are
+# main artifacts; their ArazzoSources overlays are secondary artifacts, imported last.
 set -euo pipefail
 
 MICROCKS_URL="${MICROCKS_URL:-http://localhost:8080}"
@@ -22,10 +27,16 @@ MAIN_ARTIFACTS=(
   underwriting-cases.openapi.yaml
   underwriting.arazzo.yaml
   underwriting-guards.arazzo.yaml
+  underwriting-tools.arazzo.yaml
 )
-SECONDARY_ARTIFACTS=(
+APIS=(customer-accounts sirene bodacc georisques company-financials claims-and-contracts llm-gateway underwriting-cases)
+SECONDARY_ARTIFACTS=()
+for api in "${APIS[@]}"; do SECONDARY_ARTIFACTS+=("${api}.microcks-metadata.yaml"); done
+for api in "${APIS[@]}"; do SECONDARY_ARTIFACTS+=("${api}.microcks-examples.yaml"); done
+SECONDARY_ARTIFACTS+=(
   underwriting.arazzo-sources.yaml
   underwriting-guards.arazzo-sources.yaml
+  underwriting-tools.arazzo-sources.yaml
 )
 
 upload() {
@@ -46,7 +57,11 @@ upload() {
 selected() {
   [[ $# -eq 1 ]] && return 0
   local file="$1"; shift
-  for wanted in "$@"; do [[ "$wanted" == "$file" ]] && return 0; done
+  for wanted in "$@"; do
+    [[ "$wanted" == "$file" ]] && return 0
+    # An OpenAPI file brings its Microcks metadata and examples along.
+    [[ "$wanted" == *.openapi.yaml && "$file" == "${wanted%.openapi.yaml}".microcks-* ]] && return 0
+  done
   return 1
 }
 

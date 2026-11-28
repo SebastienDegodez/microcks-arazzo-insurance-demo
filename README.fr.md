@@ -13,8 +13,8 @@ Microcks joue tous les rôles autour de l'orchestrateur :
 | # | Rôle de Microcks | Où |
 |---|---|---|
 | 1 | **Mocke de vraies API** : CRM, Sirene (INSEE), BODACC, Géorisques, bilans, sinistres | `contracts/*.openapi.yaml` |
-| 2 | **Mocke un LLM** : une API chat completions compatible OpenAI, appels d'outils compris | `contracts/llm-gateway.openapi.yaml` |
-| 3 | **Sert d'API derrière un serveur MCP** : reShapr expose l'API Géorisques en outils MCP, et Microcks simule l'API derrière lui | `tools/reshapr/` |
+| 2 | **Mocke un LLM** : une API chat completions compatible OpenAI, appels d'outils compris ; il vérifie que chaque agent a reçu les bons outils | `contracts/llm-gateway.openapi.yaml` |
+| 3 | **Sert des outils MCP, de deux façons** : par son propre endpoint MCP natif (agent santé financière), ou derrière reShapr, qui expose Géorisques et BODACC en MCP et appelle les mocks Microcks (agent climat) | `tools/reshapr/` |
 | 4 | **Se fait passer pour l'orchestrateur** : un mock à état, piloté par le temps, de l'API de l'orchestrateur, derrière un feature flip dans l'IHM | `contracts/underwriting-cases.openapi.yaml` |
 | 5 | **Teste l'orchestrateur côté fournisseur** : des workflows Arazzo jouent le parcours du conseiller contre l'orchestrateur | `contracts/underwriting.arazzo.yaml` |
 | 6 | **Vérifie l'orchestrateur côté consommateur** : dans une session, Microcks vérifie que les appels sortants de l'orchestrateur suivent un workflow Arazzo (ordre, données passées d'une étape à l'autre, contrat de chaque appel), avec des pannes injectées | `tests/UnderwritingOrchestrator.WorkflowTests/` |
@@ -52,8 +52,9 @@ Le conseiller choisit une entreprise par son SIREN et ouvre un dossier. L'orches
    contrats en cours ;
 3. fait évaluer la **qualité des données** par un analyste LLM ;
 4. attend que le **conseiller valide les données**, et corrige l'effectif déclaré si besoin ;
-5. lance les **analyses** : risque climatique (un agent LLM qui appelle un outil MCP pour lire les risques naturels),
-   santé financière, encours ;
+5. lance les **analyses** : risque climatique (un agent LLM avec deux outils MCP, Géorisques et BODACC, servis par
+   reShapr), santé financière (un agent LLM avec un outil MCP, les comptes annuels, servi par Microcks lui-même),
+   encours ;
 6. produit une **suggestion consultative** (`synthesis`), par un LLM ou par une règle ;
 7. attend la **décision du conseiller**. Quand le risque est trop important pour plusieurs raisons, la décision est
    *renforcée* : le conseiller doit reconnaître chaque raison une à une et écrire un commentaire.
@@ -83,8 +84,9 @@ flowchart LR
 
     subgraph microcks ["Microcks · :8080 (feature/arazzo)"]
         direction TB
-        mockOrch["Mock de Underwriting cases<br/>(dispatcher SCRIPT + store)"]
+        mockOrch["Mock de Underwriting cases<br/>(dispatcher JS + store)"]
         apis["Mocks REST<br/>Customer accounts · Sirene · BODACC<br/>Company financials · Claims and contracts"]
+        mcpNative["Endpoint MCP natif<br/>Company financials"]
         llm["Mock LLM gateway<br/>chat completions OpenAI"]
         geo["Mock Georisques"]
         arazzo["Documents Arazzo<br/>runs · sessions · vérification"]
@@ -95,8 +97,10 @@ flowchart LR
 
     orch -- REST --> apis
     orch -- "chat completions" --> llm
-    orch -- "MCP tools/list, tools/call" --> reshapr
-    reshapr -- REST --> geo
+    orch -- "MCP tools/list, tools/call<br/>(agent climat)" --> reshapr
+    orch -- "MCP tools/list, tools/call<br/>(agent santé financière)" --> mcpNative
+    reshapr -- "REST (Géorisques, BODACC)" --> geo
+    reshapr -- REST --> apis
     arazzo <--> minion
     minion -. "runs côté fournisseur" .-> orch
 ```
@@ -109,7 +113,8 @@ flowchart LR
 - **Minion Arazzo** : un worker Quarkus, sur le port 8082, qui joue un workflow (runs côté fournisseur). La vérification
   côté consommateur n'en a pas besoin.
 - **reShapr** ([reshapr.io](https://github.com/reshaprio/reshapr)) : transforme une API OpenAPI en serveur MCP. Ici, il
-  expose l'API Géorisques, que Microcks simule derrière lui.
+  expose les API Géorisques et BODACC, que Microcks simule derrière lui. Il est en dehors de Microcks : une vraie
+  passerelle MCP devant des API mockées.
 
 ## L'orchestrateur
 
@@ -139,11 +144,11 @@ flowchart TD
     companyIdentity --> dataQuality["dataQuality<br/>LLM"]
     financials --> dataQuality
     companyIdentity & legalEvents & financials & openItems & dataQuality --> dataReview{{"dataReview<br/>CONSEILLER"}}
-    companyIdentity --> climateRisk["climateRisk<br/>LLM + outil MCP"]
+    companyIdentity --> climateRisk["climateRisk<br/>LLM + outils MCP (reShapr)"]
     dataQuality --> climateRisk
     openItems --> openItemsReview["openItemsReview<br/>LLM"]
     dataQuality --> openItemsReview
-    financials & legalEvents & dataReview --> financialHealth["financialHealth<br/>LLM"]
+    financials & legalEvents & dataReview --> financialHealth["financialHealth<br/>LLM + outil MCP (Microcks)"]
     climateRisk & openItemsReview & financialHealth & dataReview --> synthesis["synthesis<br/>LLM ou règle"]
     synthesis --> advisorDecision{{"advisorDecision<br/>CONSEILLER"}}
 ```
@@ -167,32 +172,54 @@ Les règles de l'orchestrateur :
 - **Démarrages décalés** : une étape prête attend 0,3 à 5 s avant de partir.
 - **File LLM** : au plus 2 appels LLM en même temps par dossier. Au-delà, l'étape passe `QUEUED`.
 
-### L'agent climat appelle lui-même l'outil MCP
+### Les outils MCP des agents : deux exemples
 
-La chaîne est : agent climat (LLM) → reShapr (MCP) → API Géorisques (mock Microcks). `climateRisk` est une boucle
-d'appel d'outils générique (`orchestrator/Agents/ToolUsingAgent.cs`) :
+Deux agents reçoivent des outils MCP. Dans l'appel d'outils OpenAI, **le modèle n'appelle jamais un outil lui-même** :
+il répond par des `tool_calls`, l'orchestrateur exécute chacun d'eux via MCP et renvoie les résultats (messages
+`role: tool`). La boucle n'est pas écrite à la main : l'orchestrateur construit ses agents avec **Microsoft Agent
+Framework** (`ChatClientAgent` sur le client OpenAI Chat Completions de `Microsoft.Extensions.AI`) et ouvre les serveurs
+MCP avec le **SDK MCP C# officiel** (`ModelContextProtocol`). Voir `orchestrator/Agents/UnderwritingAgents.cs` et
+`orchestrator/Dependencies/McpTools.cs`.
+
+| | Exemple 1, « Microcks pur » | Exemple 2, via reShapr |
+|---|---|---|
+| Agent | `financial-health` | `climate-risk` |
+| Serveur MCP | l'endpoint MCP natif du mock `Company financials` (`/mcp/Company%20financials/1.0.0`) | reShapr (`/mcp/reshapr/georisques-1-0-0-default` et `/mcp/reshapr/bodacc-1-0-0-default`), devant les mocks Microcks |
+| Outils | `get_companies_siren_financials` | `get_resultats_rapport_risque`, `get_annonces` |
+| Appels de l'étape | `MCP`, `LLM`, `MCP`, `LLM` | `MCP`, `MCP`, `LLM`, `MCP`, `MCP`, `LLM` |
+| Vu dans une session Arazzo | non : l'endpoint MCP natif n'enregistre pas ses appels dans une session | oui : reShapr transmet `x-microcks-session` (et `x-microcks-delay`) aux mocks |
 
 ```mermaid
 sequenceDiagram
     participant O as Orchestrateur (climateRisk)
     participant R as reShapr (MCP)
     participant L as LLM gateway (Microcks)
-    participant G as Georisques (Microcks)
-    O->>R: tools/list
-    R-->>O: get_resultats_rapport_risque {inputSchema}
+    participant G as Georisques, BODACC (Microcks)
+    O->>R: tools/list (serveur Géorisques, serveur BODACC)
+    R-->>O: get_resultats_rapport_risque, get_annonces {inputSchema}
     O->>L: chat completions + tools
-    L-->>O: tool_calls get_resultats_rapport_risque(code_insee, latlon)
-    O->>R: tools/call
-    R->>G: GET /resultats_rapport_risque
-    G-->>R: risques naturels
-    R-->>O: résultat de l'outil
-    O->>L: chat completions + message role: tool
+    Note over L: le dispatcher JS vérifie les outils<br/>(sinon 400 missing-tools)
+    L-->>O: tool_calls get_resultats_rapport_risque(code_insee, latlon), get_annonces(siren)
+    O->>R: tools/call × 2
+    R->>G: GET /resultats_rapport_risque, GET /annonces
+    G-->>R: risques naturels, annonces légales
+    R-->>O: résultats des outils
+    O->>L: chat completions + messages role: tool
     L-->>O: évaluation structurée (JSON)
 ```
 
-Le client MCP parle en Streamable HTTP (JSON-RPC, protocole `2025-06-18`, `Mcp-Session-Id`). Il n'a aucun nom d'outil en
-dur : c'est le modèle qui choisit l'outil parmi ceux de `tools/list`. Le LLM mocké sait demander un outil : pour l'agent
-`climate-risk`, il répond par des `tool_calls` tant que la requête ne contient pas de message `role: tool`.
+Ce que cela teste :
+
+- **L'application donne les bons outils** : le mock LLM vérifie que chaque agent à outils a reçu les outils attendus,
+  avec leurs arguments obligatoires. Sinon, il répond `400 missing-tools` et l'étape échoue
+  (`AnOrchestratorThatForgetsAToolIsCaught`).
+- **La passerelle MCP fait le bon appel** : dans une session, Microcks voit les appels que reShapr fait pour le modèle,
+  et vérifie leurs données : le code INSEE reçu par Géorisques doit être celui que Sirene a renvoyé
+  (`TheClimateAgentToolsGoThroughReshapr`, workflow `climateToolsGoThroughReshapr`).
+
+Le SDK MCP gère le protocole (Streamable HTTP, `initialize` puis `notifications/initialized`, `Mcp-Session-Id`,
+`MCP-Protocol-Version`, fermeture de la session). Aucun nom d'outil n'est en dur dans l'orchestrateur : le modèle choisit
+les outils parmi ceux de `tools/list`.
 
 ### Décision renforcée
 
@@ -205,26 +232,47 @@ collective. La décision exige alors chaque raison dans `acknowledgedReasons`, e
 
 Tous les contrats sont générés par `scripts/generate-contracts.py`. Modifiez le générateur, pas les fichiers YAML.
 
+Chaque API tient en trois fichiers, pour que la définition de l'API ne dépende pas de Microcks :
+
+| Fichier | Type | Contenu |
+|---|---|---|
+| `<api>.openapi.yaml` | OpenAPI 3.0 (artefact principal) | la seule définition de l'API, en anglais : chemins, schémas, descriptions ; ni `x-microcks-*`, ni exemples |
+| `<api>.microcks-metadata.yaml` | `APIMetadata` (artefact secondaire) | par opération : `dispatcher`, `dispatcherRules` (JavaScript), `delay`, `delayStrategy` |
+| `<api>.microcks-examples.yaml` | `APIExamples` (artefact secondaire) | les exemples nommés : paramètres et corps de la requête, statut et corps de la réponse |
+
+L'ordre d'import compte : l'OpenAPI d'abord, puis les métadonnées, puis les exemples (un exemple tire son critère de
+dispatch du dispatcher de son opération). `scripts/import-contracts.sh` et le fixture Testcontainers respectent cet
+ordre. reShapr importe les `georisques.openapi.yaml` et `bodacc.openapi.yaml` purs.
+
 | Nom Microcks (`info.title` 1.0.0) | Rôle | Opérations |
 |---|---|---|
 | `Customer accounts` | CRM interne | `GET /customers/by-siren/{siren}` → 200, ou 404 `CUSTOMER_NOT_FOUND` |
 | `Sirene` | répertoire INSEE | `GET /siren/{siren}` |
-| `BODACC` | annonces légales | `GET /annonces?siren={siren}` |
+| `BODACC` | annonces légales (exposé aussi en MCP par reShapr) | `GET /annonces?siren={siren}` |
 | `Georisques` | risques naturels (exposé aussi en MCP par reShapr) | `GET /resultats_rapport_risque?code_insee=…&latlon=…` |
-| `Company financials` | bilans | `GET /companies/{siren}/financials` |
+| `Company financials` | bilans (servi aussi par l'endpoint MCP natif de Microcks) | `GET /companies/{siren}/financials` |
 | `Claims and contracts` | sinistres et contrats internes | `GET /customers/{customerId}/open-items` |
 | `LLM gateway` | LLM compatible OpenAI | `POST /v1/chat/completions` (`operationId: createChatCompletion`) |
 | `Underwriting cases` | l'orchestrateur lui-même | les 4 endpoints ci-dessus |
 
 Quelques techniques de mock sur lesquelles repose la démo :
 
-- **Le dispatch du LLM** : l'orchestrateur ajoute `metadata: {agent, siren}` à chaque chat completion. Un dispatcher
-  `SCRIPT` le lit et choisit l'exemple `<agent>-<siren>`, par exemple `climate-risk-100000001`. Mettez
-  `LlmGateway:SendMetadata=false` face à un vrai fournisseur qui refuse ce champ.
-- **La latence** : chaque opération déclare `x-microcks-operation.delay` et `delayStrategy` (`fixed`, `random`,
+- **Des dispatchers JavaScript** : tous les dispatchers scriptés sont en `dispatcher: JS` (le moteur JavaScript de
+  Microcks ; le script est le corps d'une fonction `process()` qui renvoie le nom de la réponse, avec `mockRequest`,
+  `store`, `requestContext` et `log`). Plus de Groovy.
+- **Le dispatch du LLM** : l'orchestrateur ajoute `metadata: {agent, siren}` à chaque chat completion. Le dispatcher JS
+  le lit et choisit l'exemple `<agent>-<siren>`, par exemple `climate-risk-100000001`. Pour un agent à outils, il
+  vérifie d'abord les `tools` (sinon `missing-tools`), puis répond `<agent>-<siren>-tool-calls` tant que la requête ne
+  contient pas de messages `role: tool`. Mettez `LlmGateway:SendMetadata=false` face à un vrai fournisseur qui refuse
+  ce champ.
+- **La latence** : chaque opération déclare `delay` et `delayStrategy` dans son `APIMetadata` (`fixed`, `random`,
   `random-XX`). Un appelant peut aussi demander une latence par requête avec les en-têtes `x-microcks-delay` et
-  `x-microcks-delay-strategy`. reShapr les transmet au mock Géorisques.
-- **Le mock de l'orchestrateur** (`Underwriting cases`) : un dispatcher `SCRIPT` avec le store de Microcks. Le `POST`
+  `x-microcks-delay-strategy`. reShapr les transmet aux mocks Géorisques et BODACC ; l'endpoint MCP natif de Microcks
+  les ignore.
+- **Les paramètres de requête en MCP** : `Georisques` et `BODACC` utilisent un dispatcher JS plutôt que `URI_PARAMS` :
+  avec `URI_PARAMS`, un `tools/call` sur l'endpoint MCP natif de Microcks double la query string et aucun exemple ne
+  correspond.
+- **Le mock de l'orchestrateur** (`Underwriting cases`) : un dispatcher JS avec le store de Microcks. Le `POST`
   enregistre l'heure de départ et des durées aléatoires ; le `GET` choisit l'instantané d'après le temps écoulé ; les
   deux `POST` du conseiller enregistrent leur heure et répondent 409 hors de leur tour. Il se comporte comme
   l'orchestrateur réel, au temps près.
@@ -302,6 +350,10 @@ Les workflows utilisés ici :
 - `collectiveProcedureStopsTheAnalyses` (*Commercial underwriting guards*, `contracts/underwriting-guards.arazzo.yaml`) :
   ce document relie aussi le `LLM gateway`, donc un seul appel LLM après une procédure collective est signalé comme appel
   inattendu.
+- `climateToolsGoThroughReshapr` (*Commercial underwriting agent tools*, `contracts/underwriting-tools.arazzo.yaml`) :
+  la collecte, puis les deux appels d'outils que reShapr fait pour l'agent climat : `climateNaturalRisks` (Géorisques,
+  avec `code_insee` issu de `$steps.companyIdentity.outputs.inseeCityCode`) et `climateLegalEvents` (un second appel au
+  BODACC).
 
 ### Propager la session sans toucher à l'orchestrateur
 
@@ -312,18 +364,20 @@ reçoit aucune ligne de code : c'est le test qui ajoute la propagation de l'ext�
 - un `IStartupFilter` lit la session de la requête entrante (en-tête ou baggage) dans un `AsyncLocal`, qui suit le
   travail du dossier en arrière-plan ;
 - `ConfigureHttpClientDefaults` ajoute un `DelegatingHandler` à chaque client `IHttpClientFactory` (REST, MCP et LLM),
-  qui écrit `x-microcks-session` sur chaque appel sortant.
+  qui écrit `x-microcks-session` sur chaque appel sortant. Les clients OpenAI et MCP de l'orchestrateur passent par les
+  handlers des clients nommés `llm-gateway` et `mcp` : ils la portent aussi, et reShapr la transmet ensuite aux mocks.
 
 > [!TIP]
 > En .NET 10, le **baggage W3C se propage tout seul** : un dossier posté avec `baggage: microcks-session=<id>` à un
-> orchestrateur *sans* le handler porte quand même la session sur ses 11 appels sortants (5 REST, 6 LLM), y compris ceux
-> qui partent après la validation des données. L'en-tête `x-microcks-session` seul ne se propage pas sans aide.
+> orchestrateur *sans* le handler porte quand même la session sur ses appels sortants REST et LLM, y compris ceux qui
+> partent après la validation des données (mesuré avant le passage aux SDK d'agent et MCP). L'en-tête `x-microcks-session` seul ne se propage pas sans aide.
 
 ### Les tests
 
 `tests/UnderwritingOrchestrator.WorkflowTests/` (xUnit v3, `Microcks.Testcontainers`,
 `Microsoft.AspNetCore.Mvc.Testing`). Chaque test ouvre sa propre session et son propre orchestrateur : la suite tourne en
-parallèle en 15 secondes environ.
+parallèle en une minute environ (l'endpoint MCP natif de Microcks ignore `x-microcks-delay` : l'outil des comptes
+annuels garde sa latence de 30 à 60 s).
 
 | Test | Ce qu'il montre |
 |---|---|
@@ -335,9 +389,11 @@ parallèle en 15 secondes environ.
 | `AnUnknownCustomerStopsTheCase` | 404 du CRM injecté : cet appel seulement, rien après |
 | `ACollectiveProcedureStopsTheAnalyses` | Procédure collective injectée : les 5 appels de collecte, aucun appel LLM |
 | `TwoCasesInParallelStayIsolated` | Deux sessions en même temps sur les mêmes mocks : la panne injectée dans l'une n'atteint jamais l'autre |
+| `AnOrchestratorThatForgetsAToolIsCaught` | Bug planté : l'outil BODACC n'arrive jamais au modèle. Le mock LLM répond `400 missing-tools`, `climateRisk` échoue après `MCP`, `MCP`, `LLM` |
+| `TheClimateAgentToolsGoThroughReshapr` | L'exemple 2 de bout en bout : les appels d'outils du modèle passent par reShapr jusqu'aux mocks Géorisques et BODACC, et la session les vérifie (il faut reShapr et `RESHAPR_MCP_URL`) |
 
-Les bugs plantés sont des `DelegatingHandler` ajoutés au client typé `CompanyDataApis` de l'orchestrateur
-(`Infrastructure/Sabotage.cs`) : le code de l'orchestrateur reste intact.
+Les bugs plantés sont des `DelegatingHandler` ajoutés aux clients HTTP de l'orchestrateur (`Infrastructure/Sabotage.cs`) :
+le code de l'orchestrateur reste intact.
 
 ## L'IHM du conseiller
 
@@ -413,7 +469,8 @@ Le script vérifie Microcks et le minion, démarre reShapr si besoin (`scripts/s
 | Orchestrateur | http://localhost:5180 |
 | Workflows dans Microcks | http://localhost:8080/#/workflows (document *Commercial underwriting*) |
 | Console reShapr | http://localhost:5555 |
-| Endpoint MCP (reShapr) | http://localhost:7778/mcp/reshapr/georisques-1-0-0-default |
+| Endpoints MCP (reShapr) | http://localhost:7778/mcp/reshapr/georisques-1-0-0-default, http://localhost:7778/mcp/reshapr/bodacc-1-0-0-default |
+| Endpoint MCP (Microcks) | http://localhost:8080/mcp/Company%20financials/1.0.0 |
 
 Arrêt : `scripts/stop-demo.sh` (orchestrateur et IHM), ou `scripts/stop-demo.sh --all` (reShapr aussi). Microcks reste
 démarré.
@@ -423,7 +480,9 @@ démarré.
 1. Ouvrez `100000002` avec l'orchestrateur réel et le panneau *Comprendre* : le CRM d'abord, puis les 4 sources en
    parallèle, l'analyse de qualité des données, puis le dossier vous attend.
 2. Validez les données : `financialHealth` ne démarre que maintenant, alors que `climateRisk` a peut-être déjà fini.
-   Suivez l'agent climat : `tools/list`, le modèle qui demande l'outil, reShapr, Géorisques, de nouveau le modèle.
+   Suivez l'agent climat : `tools/list` sur reShapr, le modèle qui demande les deux outils, l'orchestrateur qui les
+   exécute via reShapr (Géorisques, BODACC), de nouveau le modèle. Puis l'agent santé financière, dont l'outil est servi
+   par Microcks lui-même.
 3. Décidez. Ouvrez ensuite `100000004` : la décision est renforcée, avec 4 raisons à reconnaître.
 4. Ouvrez `100000003` : la procédure collective coupe les analyses, aucun LLM n'est appelé.
 5. Basculez sur *Microcks (mock)* et rejouez : même parcours, mais seul l'échange IHM ⇄ Microcks bouge.
@@ -445,13 +504,20 @@ MICROCKS_URL=http://localhost:8080 dotnet test --logger "console;verbosity=detai
 # Un seul test, pour la scène
 MICROCKS_URL=http://localhost:8080 dotnet test --logger "console;verbosity=detailed" \
   --filter "FullyQualifiedName~AnOrchestratorThatSendsTheSirenToClaimsIsCaught"
+
+# L'exemple 2 via reShapr (scripts/start-reshapr.sh d'abord)
+MICROCKS_URL=http://localhost:8080 RESHAPR_MCP_URL=http://localhost:7778 dotnet test \
+  --logger "console;verbosity=detailed" --filter "FullyQualifiedName~TheClimateAgentToolsGoThroughReshapr"
 ```
+
+Sans `RESHAPR_MCP_URL`, les outils climat passent par les endpoints MCP natifs de Microcks et le test reShapr est sauté.
 
 Chaque test imprime le verdict de Microcks : les étapes, puis les appels reçus dans la session.
 
 | | Stack démarrée | Testcontainers |
 |---|---|---|
-| Tests côté consommateur (7) | verts | verts |
+| Tests côté consommateur (8) | verts | verts |
+| `TheClimateAgentToolsGoThroughReshapr` | vert avec `RESHAPR_MCP_URL`, sauté sinon | sauté |
 | `TheOrchestratorApiHonoursTheAdvisorJourney` (côté fournisseur) | vert | sauté : le minion Arazzo n'a pas encore d'image |
 
 ## Configuration
@@ -462,9 +528,10 @@ L'orchestrateur lit `orchestrator/appsettings.json`. Toute clé se surcharge par
 | Clé | Défaut |
 |---|---|
 | `Services:CustomerAccounts`, `Sirene`, `Bodacc`, `CompanyFinancials`, `ClaimsAndContracts` | les mocks Microcks `http://localhost:8080/rest/<Nom>/1.0.0/` |
-| `Mcp:Georisques:Endpoint` | reShapr `http://localhost:7778/mcp/reshapr/georisques-1-0-0-default` |
+| `Mcp:Georisques`, `Mcp:Bodacc` | reShapr `http://localhost:7778/mcp/reshapr/georisques-1-0-0-default`, `…/bodacc-1-0-0-default` (agent climat) |
+| `Mcp:CompanyFinancials` | l'endpoint MCP natif de Microcks `http://localhost:8080/mcp/Company%20financials/1.0.0` (agent santé financière) |
 | `LlmGateway:BaseUrl`, `ApiKey`, `Model`, `SendMetadata`, `TimeoutSeconds` | le LLM mocké `http://localhost:8080/rest/LLM+gateway/1.0.0/` |
-| `LlmGateway:DelayOverrides:<agent>:{Delay,Strategy}` | `financial-health` : 50000 ms, `random-20` (40 à 60 s) |
+| `LlmGateway:DelayOverrides:<agent>:{Delay,Strategy}` | aucun ; par exemple `financial-health` : 50000 ms, `random-20` |
 | `Demo:MicrocksDelayOverride:{Delay,Strategy}` | vide ; s'applique à tous les appels REST, MCP et LLM |
 | `Llm:MaxConcurrency`, `Llm:MaxToolRounds` | 2, 3 |
 | `Orchestration:StartJitterMilliseconds:{Min,Max}` | 300, 5000 |
@@ -472,10 +539,11 @@ L'orchestrateur lit `orchestrator/appsettings.json`. Toute clé se surcharge par
 
 Une entrée `DelayOverrides` par agent l'emporte sur `Demo:MicrocksDelayOverride`. Pour tout accélérer, mettez les deux à 0.
 
-**Utiliser le serveur MCP natif de Microcks** à la place de reShapr (Microcks ignore alors les en-têtes de latence) :
+**Utiliser aussi les serveurs MCP natifs de Microcks pour l'agent climat**, à la place de reShapr (Microcks ignore alors
+les en-têtes de latence, et n'enregistre pas ces appels dans une session) :
 
 ```bash
-Mcp__Georisques__Endpoint=http://localhost:8080/mcp/Georisques/1.0.0 dotnet run
+Mcp__Georisques=http://localhost:8080/mcp/Georisques/1.0.0 Mcp__Bodacc=http://localhost:8080/mcp/BODACC/1.0.0 dotnet run
 ```
 
 **Brancher un vrai LLM** (`BaseUrl` sans `/v1`) :
@@ -495,18 +563,18 @@ LlmGateway__SendMetadata=false dotnet run
 | `scripts/generate-contracts.py` | Génère tous les fichiers de `contracts/` |
 | `scripts/verify-mocks.sh` | Vérifie que chaque mock répond pour chaque SIREN avec la latence de son contrat, MCP compris, puis pilote le mock de l'orchestrateur comme un conseiller (3 min environ) |
 | `scripts/run-arazzo.sh [workflowId...]` | Rejoue les exemples nommés des workflows Arazzo contre les mocks |
-| `scripts/start-reshapr.sh` | Démarre reShapr (Docker Compose) et expose le mock Géorisques en endpoint MCP |
+| `scripts/start-reshapr.sh` | Démarre reShapr (Docker Compose) et expose les mocks Géorisques et BODACC en endpoints MCP |
 | `scripts/stop-reshapr.sh [--purge]` | Arrête reShapr (`--purge` : supprime le volume de sa base) |
 
 ## Organisation du dépôt
 
 ```text
-contracts/      contrats OpenAPI, documents Arazzo et overlays ArazzoSources (générés)
+contracts/      définitions OpenAPI, leurs métadonnées et exemples Microcks, documents Arazzo et overlays (générés)
 orchestrator/   orchestrateur de souscription .NET 10 (minimal API)
   Cases/          modèle du dossier, les 12 étapes et leurs dependsOn, stockage en mémoire
   Underwriting/   workflow, exécution des étapes, file LLM, endpoints du conseiller, décision renforcée, règles
-  Dependencies/   clients REST, client MCP générique, client LLM compatible OpenAI, en-têtes de latence Microcks
-  Agents/         boucle d'agent avec appel d'outils et prompts consultatifs
+  Dependencies/   clients REST, outils MCP (SDK MCP C# officiel), journal des appels et handlers de latence Microcks
+  Agents/         agents LLM (Microsoft Agent Framework sur OpenAI Chat Completions) et prompts consultatifs
 ui/             IHM du conseiller : hôte ASP.NET + BFF, wwwroot (sans build), tests e2e Playwright
 tests/          UnderwritingOrchestrator.WorkflowTests : tests Arazzo côté consommateur et côté fournisseur
 tools/reshapr/  fichiers Docker Compose et CLI de reShapr
@@ -521,6 +589,9 @@ SCENARIO.md     le scénario détaillé : le contrat entre contrats, orchestrate
 - **Les étapes async ne sont pas jouées** : Microcks lit les sources AsyncAPI d'Arazzo 1.1 mais ne joue pas encore leurs
   étapes.
 - **Le minion Arazzo n'a pas d'image** : les runs côté fournisseur demandent le minion démarré depuis son jar.
+- **L'endpoint MCP natif de Microcks** : il ignore les en-têtes `x-microcks-delay` et n'enregistre pas ses appels dans
+  une session Arazzo. Pour voir les appels d'outils dans une session, placez une passerelle MCP comme reShapr devant les
+  mocks REST.
 - **Les mocks hors session** : certains exemples sont choisis dans l'ordre de stockage de Microcks. Pour un SIREN qu'aucun
   exemple ne connaît, un dossier peut mélanger plusieurs entreprises. Dans une session, la vérification reste juste.
 - Constaté dans Microcks `feature/arazzo`, encore à remonter : `POST /api/arazzo/sessions` sans `documentId` répond 500
@@ -538,6 +609,8 @@ SCENARIO.md     le scénario détaillé : le contrat entre contrats, orchestrate
 | `400 … no base URL for source …` pour un run contre les implémentations | Passez une URL pour chaque source du document, mocks compris. |
 | L'IHM n'affiche rien en mode *Microcks (mock)* | Le mock `Underwriting cases` n'est pas importé : lancez `scripts/import-contracts.sh`. `/bff/health` dit quel backend répond. |
 | Port 7777 déjà pris | La passerelle reShapr est volontairement exposée sur 7778 ici. |
+| Une étape à outils échoue avec `LLM : réponse HTTP 400` | Le mock LLM n'a pas trouvé les outils attendus (`missing-tools`) : vérifiez que les endpoints MCP de `Mcp:*` répondent à `tools/list`. |
+| L'outil BODACC expire via reShapr | Son mock répond en 30 s au plus : `docker-compose.demo.yml` porte le délai backend de reShapr à 35 s. |
 
 ## Transparence
 

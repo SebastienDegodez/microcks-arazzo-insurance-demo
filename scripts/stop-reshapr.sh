@@ -2,7 +2,7 @@
 # Stops the local reShapr started by scripts/start-reshapr.sh (only the reshapr-* containers and their network).
 #
 #   scripts/stop-reshapr.sh           keeps the reShapr database (volume reshapr-demo-pgdata): the next start
-#                                     finds the Georisques Service and its Exposition again
+#                                     finds the Georisques and BODACC Services and their Expositions again
 #   scripts/stop-reshapr.sh --purge   also deletes that volume
 set -euo pipefail
 

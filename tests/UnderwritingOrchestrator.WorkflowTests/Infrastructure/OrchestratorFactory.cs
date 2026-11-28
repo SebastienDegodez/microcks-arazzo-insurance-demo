@@ -10,8 +10,11 @@ namespace UnderwritingOrchestrator.WorkflowTests.Infrastructure;
 /// The real orchestrator, hosted in the test process, with every dependency pointed at a Microcks mock, the
 /// latencies set to zero, and the Microcks session carried on every outgoing call.
 /// <paramref name="sabotage"/> lets a test plant a bug, to show that the verification catches it.
+/// <paramref name="climateToolsThroughReshapr"/> hands the climate agent the tools of reShapr (RESHAPR_MCP_URL)
+/// instead of the native MCP endpoints of Microcks.
 /// </summary>
-public sealed class OrchestratorFactory(MicrocksFixture microcks, Action<IServiceCollection>? sabotage = null)
+public sealed class OrchestratorFactory(
+    MicrocksFixture microcks, Action<IServiceCollection>? sabotage = null, bool climateToolsThroughReshapr = false)
     : WebApplicationFactory<Program>
 {
     protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -30,15 +33,16 @@ public sealed class OrchestratorFactory(MicrocksFixture microcks, Action<IServic
 
             // The mocked LLM: the client calls {BaseUrl}/v1/chat/completions
             ["LlmGateway:BaseUrl"] = microcks.RestMock("LLM gateway"),
-            // Microcks' native MCP server instead of reShapr (no Postgres/control plane/gateway in a test)
-            ["Mcp:Georisques:Endpoint"] = microcks.McpEndpoint("Georisques"),
+            // Example 1, "pure Microcks": the financial-health tool on the native MCP endpoint of Microcks
+            ["Mcp:CompanyFinancials"] = microcks.McpEndpoint("Company financials"),
+            // Example 2: the climate tools through reShapr (it forwards the x-microcks-* headers to Microcks), or
+            // on the native MCP endpoints of Microcks, whose calls a session does not record
+            ["Mcp:Georisques"] = microcks.ClimateToolEndpoint("Georisques", climateToolsThroughReshapr),
+            ["Mcp:Bodacc"] = microcks.ClimateToolEndpoint("BODACC", climateToolsThroughReshapr),
 
             // Latencies: x-microcks-delay: 0 on every call (MicrocksDelayHandler)...
             ["Demo:MicrocksDelayOverride:Delay"] = "0",
             ["Demo:MicrocksDelayOverride:Strategy"] = "fixed",
-            // ...including the per-agent override of financial-health (50 s by default), which wins otherwise
-            ["LlmGateway:DelayOverrides:financial-health:Delay"] = "0",
-            ["LlmGateway:DelayOverrides:financial-health:Strategy"] = "fixed",
             // A short random start offset, kept on purpose: the order of the four collection calls changes from
             // one run to the next, and the verification stays green ("dependsOn relaxes", section 2.2).
             ["Orchestration:StartJitterMilliseconds:Min"] = "0",

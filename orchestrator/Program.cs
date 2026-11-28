@@ -9,7 +9,7 @@ builder.Services.ConfigureHttpJsonOptions(o => CaseJson.Configure(o.SerializerOp
 builder.Services.AddCors(o => o.AddDefaultPolicy(p => p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()));
 
 builder.Services.Configure<ServiceUrls>(builder.Configuration.GetSection("Services"));
-builder.Services.Configure<GeorisquesMcpOptions>(builder.Configuration.GetSection("Mcp:Georisques"));
+builder.Services.Configure<McpServersOptions>(builder.Configuration.GetSection("Mcp"));
 builder.Services.Configure<LlmGatewayOptions>(builder.Configuration.GetSection("LlmGateway"));
 builder.Services.Configure<OrchestrationOptions>(builder.Configuration.GetSection("Orchestration"));
 builder.Services.Configure<LlmOptions>(builder.Configuration.GetSection("Llm"));
@@ -18,12 +18,11 @@ builder.Services.AddTransient<MicrocksDelayHandler>();
 
 builder.Services.AddHttpClient<CompanyDataApis>(http => http.Timeout = TimeSpan.FromSeconds(120))
     .AddHttpMessageHandler<MicrocksDelayHandler>();
-builder.Services.AddHttpClient<McpClient>(http => http.Timeout = TimeSpan.FromSeconds(120))
-    .AddHttpMessageHandler<MicrocksDelayHandler>();
-builder.Services.AddHttpClient<LlmGatewayClient>(http =>
-        http.Timeout = TimeSpan.FromSeconds(builder.Configuration.GetValue("LlmGateway:TimeoutSeconds", 120)))
-    .AddHttpMessageHandler<MicrocksDelayHandler>();
-builder.Services.AddTransient<ToolUsingAgent>();
+// The SDK clients (OpenAI, MCP) get their handlers from these named clients, one HttpClient per step.
+builder.Services.AddHttpClient(McpTools.HttpClientName).AddHttpMessageHandler<MicrocksDelayHandler>();
+builder.Services.AddHttpClient(UnderwritingAgents.HttpClientName).AddHttpMessageHandler<MicrocksDelayHandler>();
+builder.Services.AddTransient<McpTools>();
+builder.Services.AddTransient<UnderwritingAgents>();
 builder.Services.AddTransient<StepRunner>();
 builder.Services.AddTransient<UnderwritingWorkflow>();
 builder.Services.AddSingleton<CaseStore>();

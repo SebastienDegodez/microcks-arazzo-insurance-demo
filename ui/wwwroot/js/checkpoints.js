@@ -76,7 +76,7 @@ export class Checkpoints {
           <div class="recap-item"><span>Bilan ${esc(fin?.year || '')}</span><strong>${euros(fin?.revenue)}</strong><small>résultat ${euros(fin?.netIncome)} · endettement ${pct(fin?.debtRatio)}</small></div>
           <div class="recap-item ${collective.length ? 'ko' : ''}"><span>Annonces BODACC</span><strong>${esc(legal?.total ?? (legal?.records || []).length)}</strong><small>${collective.length ? `<span class="flag ko">${icon('warn', 'ico')}${esc(collective[0].nature)}</span>` : 'aucune procédure collective'}</small></div>
           <div class="recap-item ${claims.some(x => x.litigation) ? 'warn' : ''}"><span>Sinistres ouverts</span><strong>${claims.length}</strong><small>${claims.some(x => x.litigation) ? `dont ${claims.filter(x => x.litigation).length} en contentieux` : 'aucun contentieux'}</small></div>
-          <div class="recap-item"><span>Risques naturels</span><strong>${esc(geo ? riskText : 'à venir')}</strong><small>${geo ? 'agent climat · outil MCP' : 'l\'agent climat les cherche (MCP)'}</small></div>
+          <div class="recap-item"><span>Risques naturels</span><strong>${esc(geo ? riskText : 'à venir')}</strong><small>${geo ? 'agent climat · outils MCP via reShapr' : 'l\'agent climat les cherche (outils MCP via reShapr)'}</small></div>
         </div>
         <div class="dq-alerts ${dq?.issues?.length ? 'has' : ''}">
           <h4>${icon('robot', 'ico ico-llm')}Contrôle de la collecte <span class="consult">analyse LLM · consultatif</span></h4>
